@@ -106,19 +106,24 @@ function itineraryPrompt(payload: Record<string, unknown>): string {
   const area = (payload.area as string) || "";
   const days = (payload.days as string[]) || [];
   const existing = (payload.existing as string[]) || [];
+  const onlyDay = (payload.only_day as string) || "";
   // notes：使用者貼上、已自行整理的資料（可能是 Markdown）。prefs 為舊欄位，仍相容。
   const notes = ((payload.notes ?? payload.prefs) as string) || "";
+  const scopeRule = onlyDay
+    ? `★只規劃 ${onlyDay} 這一天★：所有項目的 day_date 必須是 ${onlyDay}，其他任何日期一律不要產生，即使參考資料提到別天也忽略。`
+    : `只能輸出 day_date 在這份清單內的日期：${days.join("、") || "（依期間）"}；清單以外的日期一律不要產生。`;
   return [
     `你是專業旅遊行程規劃師。請為「${trip.title ?? "這趟旅行"}」建議行程。`,
     area ? `主要地區：${area}` : "",
-    days.length ? `要規劃的日期：${days.join("、")}` : (trip.start ? `期間：${trip.start} ~ ${trip.end ?? ""}` : ""),
+    onlyDay ? `只規劃這一天：${onlyDay}` : (days.length ? `要規劃的日期：${days.join("、")}` : (trip.start ? `期間：${trip.start} ~ ${trip.end ?? ""}` : "")),
+    scopeRule,
     existing.length ? `已排的項目（請勿重複，可與之串接路線）：${existing.join("、")}` : "",
-    notes ? `使用者已整理的參考資料（可能為 Markdown，可能含景點/餐廳/時間/備註）。請『優先』採用其中提到的具體地點，盡量保留其名稱與順序，依地理位置補齊與排順；缺日期者再分配到上面的日期：\n---\n${notes}\n---` : "",
+    notes ? `使用者已整理的參考資料（可能為 Markdown，可能含景點/餐廳/時間/備註）。請『優先』採用其中提到的具體地點，盡量保留其名稱與順序，依地理位置補齊與排順${onlyDay ? `；只取其中屬於 ${onlyDay} 的部分` : "；缺日期者再分配到上面的日期"}：\n---\n${notes}\n---` : "",
     "",
-    "為每一天安排 3~5 個具體景點/餐廳，依地理位置與時間排成順路、不重疊的一日動線（從早到晚）。若上面已有參考資料，以它為主、你再補強。",
+    `${onlyDay ? "為這一天" : "為每一天"}安排 3~5 個具體景點/餐廳，依地理位置與時間排成順路、不重疊的一日動線（從早到晚）。若上面已有參考資料，以它為主、你再補強。`,
     "盡量把每個欄位都填好：start_time/end_time 給合理時段（HH:MM，24 小時制）、category 分類、location_name 完整可搜尋地名、note 一句具體建議；只有真的無法判斷的欄位才留空字串。",
     '只輸出 JSON 陣列：[{"day_date":"YYYY-MM-DD","start_time":"HH:MM","end_time":"HH:MM","title":"地點名","category":"景點|餐廳|交通|住宿|購物|其他","location_name":"可在Google地圖搜尋的完整地名","note":"一句話建議"}]。',
-    "day_date 用上面的日期；location_name 要含城市，能被地圖搜尋。",
+    "day_date 用上面指定的日期；location_name 要含城市，能被地圖搜尋。",
   ].filter(Boolean).join("\n");
 }
 

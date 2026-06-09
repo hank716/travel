@@ -605,7 +605,17 @@ async function onLoggedIn() {
 }
 
 // ---------- AI 建議行程 ----------
-function openAiItin() { $("#aiItinOut").innerHTML = ""; $("#aiItinPrefs").value = ""; $("#aiItinModal").hidden = false; }
+function openAiItin() {
+  $("#aiItinOut").innerHTML = "";
+  $("#aiItinPrefs").value = "";
+  // 規劃範圍：整趟 + 每一天。預設帶入目前正在看的那一天，避免一次蓋掉整趟。
+  const days = tripDayRange();
+  const sel = $("#aiItinDay");
+  sel.innerHTML = `<option value="">整趟（所有日期）</option>` +
+    days.map((d) => `<option value="${d}">${dayLabel(d)}</option>`).join("");
+  sel.value = (state.activeDay && days.includes(state.activeDay)) ? state.activeDay : "";
+  $("#aiItinModal").hidden = false;
+}
 function tripDayRange() {
   const t = state.trip;
   if (!t?.start_date) return [];
@@ -619,17 +629,23 @@ async function onAiItinGo() {
   out.innerHTML = `<p class="status">AI 規劃中…</p>`;
   try {
     const items = await listItems(state.trip.id);
-    let days = tripDayRange();
+    const onlyDay = $("#aiItinDay").value;            // 空 = 整趟
+    let days = onlyDay ? [onlyDay] : tripDayRange();
     if (!days.length) days = [...new Set(items.map((i) => i.day_date).filter(Boolean))];
     const area = items.find((i) => i.weather_area)?.weather_area || "";
-    const { items: sug } = await callAI("suggest_itinerary", {
+    const { items: raw } = await callAI("suggest_itinerary", {
       trip: { title: state.trip.title, start: state.trip.start_date, end: state.trip.end_date },
-      area, days, existing: items.map((i) => i.title), notes: $("#aiItinPrefs").value.trim(),
+      area, days, only_day: onlyDay || null,
+      existing: items.map((i) => i.title), notes: $("#aiItinPrefs").value.trim(),
     });
-    if (!Array.isArray(sug) || !sug.length) { out.innerHTML = `<p class="status">沒有建議，換個偏好再試。</p>`; return; }
+    // 指定某天時，前端再保險過濾：只留該天（缺日期者補上該天），確保不動到其他天
+    const sug = (Array.isArray(raw) ? raw : []).filter((s) => s && s.title)
+      .filter((s) => !onlyDay || !s.day_date || s.day_date === onlyDay)
+      .map((s) => (onlyDay ? { ...s, day_date: onlyDay } : s));
+    if (!sug.length) { out.innerHTML = `<p class="status">沒有建議，換個偏好再試。</p>`; return; }
     out.innerHTML = `
       <div class="ai-itin-bar">
-        <span class="status">AI 建議 ${sug.length} 個項目</span>
+        <span class="status">AI 建議 ${sug.length} 個項目${onlyDay ? "（僅 " + dayLabel(onlyDay) + "）" : ""}</span>
         <button class="btn btn--sm" type="button" id="aiAddAll">全部加入行程</button>
       </div>
       ${sug.map((s, idx) => `

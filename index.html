@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#FFF4E8" />
   <title>旅程規劃 · Trip Planner</title>
-  <link rel="stylesheet" href="./css/app.css?v=20260610b" />
+  <link rel="stylesheet" href="./css/app.css?v=20260610c" />
 </head>
 <body>
   <header class="topbar">
@@ -422,12 +422,15 @@
           <h2 class="card-title">✨ AI 建議行程</h2>
           <button id="aiItinClose" class="btn btn--ghost btn--sm" type="button">✕</button>
         </div>
+        <label style="display:block; font-size:14px; font-weight:600; color:var(--muted); margin-bottom:10px;">規劃範圍
+          <select id="aiItinDay" style="margin-top:6px;"></select>
+        </label>
         <textarea id="aiItinPrefs" class="ai-itin-input" rows="6"
-          placeholder="偏好（美食、文化、親子…），或直接貼上你整理好的資料（支援 Markdown，例如每天的景點/餐廳清單）。留空也可以。"></textarea>
+          placeholder="偏好（美食、文化、親子…），或直接貼上你整理好的資料（支援 Markdown，例如某一天的景點/餐廳清單）。留空也可以。"></textarea>
         <div class="row" style="justify-content:flex-end; margin:10px 0;">
           <button id="aiItinGo" class="btn btn--sm" type="button">產生</button>
         </div>
-        <p class="status">會參考這趟的地區與日期；若貼上已整理的資料，AI 會優先據此排成可逐筆加入的項目。</p>
+        <p class="status">選「指定某天」時，AI 只會規劃那一天、不動其他天。貼上已整理的資料時 AI 會優先據此排。</p>
         <div id="aiItinOut" class="itinerary-list" style="margin-top:10px;"></div>
       </div>
     </div>
@@ -500,7 +503,7 @@
 
   <div id="toast" class="toast" hidden></div>
 
-  <script src="./config.js?v=20260610b"></script>
-  <script type="module" src="./js/app.js?v=20260610b"></script>
+  <script src="./config.js?v=20260610c"></script>
+  <script type="module" src="./js/app.js?v=20260610c"></script>
 </body>
 </html>
