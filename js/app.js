@@ -24,6 +24,7 @@ import {
 const $ = (s) => document.querySelector(s);
 // 安全寫入：節點不存在就略過（避免快取到舊版 HTML 時整頁崩潰）
 const setText = (sel, v) => { const el = $(sel); if (el) el.textContent = v; };
+const setHTML = (sel, v) => { const el = $(sel); if (el) el.innerHTML = v; };
 const setHidden = (sel, v) => { const el = $(sel); if (el) el.hidden = v; };
 const { DEFAULT_BASE_CURRENCY, DEFAULT_CURRENCIES } = window.APP_CONFIG;
 
@@ -239,8 +240,8 @@ async function enterTrip(tripId) {
   state.me = await getMyMember(tripId);
   state.mapInit = false;   // 進新行程時重設地圖預設
   const frame = $("#mapFrame");
-  frame.hidden = true; frame.removeAttribute("src");
-  $("#mapTitle").textContent = "點行程項目的「地圖」即可在此顯示";
+  if (frame) { frame.hidden = true; frame.removeAttribute("src"); }
+  setText("#mapTitle", "點行程項目的「地圖」即可在此顯示");
   state.weatherLoaded = false;
   await renderTrip(trip);
   await renderItinerary(trip);
@@ -282,17 +283,20 @@ async function renderTrip(trip) {
   const isAdmin = !!me?.is_admin;
 
   // 成員（管理員可移除；未登入者標示）。新增成員帳號統一在「管理」頁。
-  $("#memberCount").textContent = `（${members.length} 人）`;
-  $("#memberList").innerHTML = members.map((m) => {
-    const isMe = me && m.id === me.id;
-    return `<div class="member-chip">
-      <span class="avatar" style="background:${m.color}">${(m.display_name || "?").slice(0, 1)}</span>
-      <span>${escapeHtml(m.display_name)}${m.is_admin ? ' <span class="tag">管理員</span>' : ""}${isMe ? " <small class='status'>(你)</small>" : ""}${m.auth_uid ? "" : " <small class='status'>未登入</small>"}</span>
-      ${isAdmin && !isMe ? `<button class="pill-x" type="button" data-rm-member="${m.id}" data-name="${escapeAttr(m.display_name)}" title="移除">×</button>` : ""}
-    </div>`;
-  }).join("");
-  $("#memberList").querySelectorAll("[data-rm-member]").forEach((b) =>
-    (b.onclick = () => onRemoveMember(b.dataset.rmMember, b.dataset.name)));
+  setText("#memberCount", `（${members.length} 人）`);
+  const memberListEl = $("#memberList");
+  if (memberListEl) {
+    memberListEl.innerHTML = members.map((m) => {
+      const isMe = me && m.id === me.id;
+      return `<div class="member-chip">
+        <span class="avatar" style="background:${m.color}">${(m.display_name || "?").slice(0, 1)}</span>
+        <span>${escapeHtml(m.display_name)}${m.is_admin ? ' <span class="tag">管理員</span>' : ""}${isMe ? " <small class='status'>(你)</small>" : ""}${m.auth_uid ? "" : " <small class='status'>未登入</small>"}</span>
+        ${isAdmin && !isMe ? `<button class="pill-x" type="button" data-rm-member="${m.id}" data-name="${escapeAttr(m.display_name)}" title="移除">×</button>` : ""}
+      </div>`;
+    }).join("");
+    memberListEl.querySelectorAll("[data-rm-member]").forEach((b) =>
+      (b.onclick = () => onRemoveMember(b.dataset.rmMember, b.dataset.name)));
+  }
 
   // 幣別
   renderBaseSelect(trip);
@@ -336,15 +340,15 @@ function upcomingHtml(items) {
 async function renderDashboard() {
   const trip = state.trip;
   if (!trip) return;
-  $("#tripSummary").innerHTML = tripSummaryHtml(trip);
-  $("#statMembers").textContent = state.members.length || "–";
+  setHTML("#tripSummary", tripSummaryHtml(trip));
+  setText("#statMembers", state.members.length || "–");
   let items = [], expenses = [];
   try { items = await listItems(trip.id); } catch { /* ignore */ }
   try { expenses = await listExpenses(trip.id); } catch { /* ignore */ }
-  $("#statItems").textContent = items.length;
+  setText("#statItems", items.length);
   const { base: baseTotal } = currencyTotals(expenses);
-  $("#statSpend").textContent = fmtMoney(baseTotal, trip.base_currency);
-  $("#upcomingList").innerHTML = upcomingHtml(items);
+  setText("#statSpend", fmtMoney(baseTotal, trip.base_currency));
+  setHTML("#upcomingList", upcomingHtml(items));
 }
 
 // 切換「有/無選定行程」的總覽呈現 + 分頁可用性（側欄與底部列同步）
