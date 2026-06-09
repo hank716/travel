@@ -21,6 +21,9 @@
 
 *, *::before, *::after { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
+/* hidden 屬性必須蓋過 .form/.join-wrap 等設了 display 的樣式，否則 hidden 失效 */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   color: var(--ink);
