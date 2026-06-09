@@ -14,7 +14,7 @@ const CORS = {
 };
 
 // 主模型 + 備援；遇 503/429 會重試與切換
-const GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
+const GEMINI_MODELS = ["gemini-flash-latest", "gemini-flash-lite-latest"];
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function json(body: unknown, status = 200) {
@@ -115,8 +115,9 @@ function itineraryPrompt(payload: Record<string, unknown>): string {
     existing.length ? `已排的項目（請勿重複，可與之串接路線）：${existing.join("、")}` : "",
     notes ? `使用者已整理的參考資料（可能為 Markdown，可能含景點/餐廳/時間/備註）。請『優先』採用其中提到的具體地點，盡量保留其名稱與順序，依地理位置補齊與排順；缺日期者再分配到上面的日期：\n---\n${notes}\n---` : "",
     "",
-    "為每一天安排 3~5 個具體景點/餐廳，依地理位置排順路線。若上面已有參考資料，以它為主、你再補強。",
-    '只輸出 JSON 陣列：[{"day_date":"YYYY-MM-DD","title":"地點名","category":"景點|餐廳|交通|住宿|購物|其他","location_name":"可在Google地圖搜尋的完整地名","note":"一句話建議"}]。',
+    "為每一天安排 3~5 個具體景點/餐廳，依地理位置與時間排成順路、不重疊的一日動線（從早到晚）。若上面已有參考資料，以它為主、你再補強。",
+    "盡量把每個欄位都填好：start_time/end_time 給合理時段（HH:MM，24 小時制）、category 分類、location_name 完整可搜尋地名、note 一句具體建議；只有真的無法判斷的欄位才留空字串。",
+    '只輸出 JSON 陣列：[{"day_date":"YYYY-MM-DD","start_time":"HH:MM","end_time":"HH:MM","title":"地點名","category":"景點|餐廳|交通|住宿|購物|其他","location_name":"可在Google地圖搜尋的完整地名","note":"一句話建議"}]。',
     "day_date 用上面的日期；location_name 要含城市，能被地圖搜尋。",
   ].filter(Boolean).join("\n");
 }
@@ -159,7 +160,7 @@ serve(async (req) => {
         return json({ areas });
       }
       case "suggest_itinerary": {
-        const raw = await gemini(itineraryPrompt(payload), { jsonOut: true, maxTokens: 2048 });
+        const raw = await gemini(itineraryPrompt(payload), { jsonOut: true, maxTokens: 3072 });
         let parsed: unknown = [];
         try { parsed = JSON.parse(raw); } catch { parsed = []; }
         // 容錯：可能回成物件包陣列

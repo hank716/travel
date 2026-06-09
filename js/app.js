@@ -627,30 +627,65 @@ async function onAiItinGo() {
       area, days, existing: items.map((i) => i.title), notes: $("#aiItinPrefs").value.trim(),
     });
     if (!Array.isArray(sug) || !sug.length) { out.innerHTML = `<p class="status">沒有建議，換個偏好再試。</p>`; return; }
-    out.innerHTML = sug.map((s, idx) => `
+    out.innerHTML = `
+      <div class="ai-itin-bar">
+        <span class="status">AI 建議 ${sug.length} 個項目</span>
+        <button class="btn btn--sm" type="button" id="aiAddAll">全部加入行程</button>
+      </div>
+      ${sug.map((s, idx) => `
       <div class="itin-item">
-        <div class="itin-time">${s.day_date ? s.day_date.slice(5) : "·"}</div>
+        <div class="itin-time">${s.day_date ? s.day_date.slice(5) : "·"}${s.start_time ? `<small>${escapeHtml(s.start_time)}</small>` : ""}</div>
         <div class="itin-body">
           <div class="itin-title">${CATEGORY_ICON[s.category] || "•"} ${escapeHtml(s.title || "")} ${s.category ? `<span class="tag">${escapeHtml(s.category)}</span>` : ""}</div>
           ${s.location_name ? `<div class="status">📍 ${escapeHtml(s.location_name)}</div>` : ""}
           ${s.note ? `<div class="itin-notes">${escapeHtml(s.note)}</div>` : ""}
         </div>
         <div class="itin-actions"><button class="btn btn--ghost btn--sm" data-add="${idx}">加入</button></div>
-      </div>`).join("");
+      </div>`).join("")}`;
+    $("#aiAddAll").onclick = () => addAllAiItems(sug, $("#aiAddAll"));
     out.querySelectorAll("[data-add]").forEach((b) => (b.onclick = async () => {
-      const s = sug[Number(b.dataset.add)];
       try {
-        await addItem(state.trip.id, {
-          day_date: s.day_date || null, title: s.title, category: s.category || null,
-          location_name: s.location_name || null, notes: s.note || null,
-        }, state.me?.id);
+        await addItem(state.trip.id, sugToItem(sug[Number(b.dataset.add)], Number(b.dataset.add)), state.me?.id);
         b.textContent = "已加入"; b.disabled = true;
         renderItinerary(state.trip).catch(() => {});
+        renderDashboard().catch(() => {});
       } catch (e) { toast(humanError(e), false); }
     }));
   } catch (e) {
     out.innerHTML = `<p class="status" data-ok="false">${humanError(e)}</p>`;
   }
+}
+
+// AI 建議 → 行程項目（盡量帶齊欄位；不確定者留空）
+function sugToItem(s, idx) {
+  return {
+    day_date: s.day_date || null,
+    start_time: s.start_time || null,
+    end_time: s.end_time || null,
+    title: s.title,
+    category: s.category || null,
+    location_name: s.location_name || null,
+    notes: s.note || null,
+    sort_order: idx,
+  };
+}
+
+// 一鍵把整份 AI 建議建立成行程
+async function addAllAiItems(sug, btn) {
+  if (!Array.isArray(sug) || !sug.length) return;
+  const old = btn.textContent; btn.disabled = true; btn.textContent = "加入中…";
+  let ok = 0;
+  for (let i = 0; i < sug.length; i++) {
+    if (!sug[i]?.title) continue;
+    try { await addItem(state.trip.id, sugToItem(sug[i], i), state.me?.id); ok++; }
+    catch { /* 略過單筆失敗，繼續其餘 */ }
+  }
+  await renderItinerary(state.trip).catch(() => {});
+  renderDashboard().catch(() => {});
+  $("#aiItinModal").hidden = true;
+  toast(ok ? `已加入 ${ok} 筆行程` : "沒有可加入的項目", !!ok);
+  if (ok) showPage("itinerary");
+  btn.disabled = false; btn.textContent = old;
 }
 
 // ---------- 記帳語意輸入 ----------
