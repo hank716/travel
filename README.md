@@ -8,8 +8,9 @@
 - ✅ **Phase 0** 基礎：repo 結構、`schema.sql` + RLS、可部署骨架
 - ✅ **Phase 1** 加入行程：建立/加入行程碼、自選名字、即時成員清單
 - ✅ **全世界幣別 + 即時匯率**：ISO 4217 完整下拉、open.er-api 即時匯率、每日快取
-- ✅ **Phase 2** 行程規劃：項目 CRUD、依日期分頁、Google Maps 帶入、即時同步
-- ⬜ Phase 3 多幣別記帳/結算 ｜ Phase 4 天氣 ｜ Phase 5 AI ｜ Phase 6 收尾
+- ✅ **Phase 2** 行程規劃：項目 CRUD、依日期分頁、Google Maps 路線帶入、即時同步
+- ✅ **Phase 3** 多幣別記帳：支出/分帳、即時匯率快照、各幣別小計、結算（每人餘額 + 最少轉帳）
+- ⬜ Phase 4 天氣 ｜ Phase 5 AI ｜ Phase 6 收尾
 
 ## 結構
 ```
