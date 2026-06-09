@@ -4,15 +4,18 @@
 
 ## 目前進度
 - ✅ **Phase 0** 基礎：repo 結構、`schema.sql` + RLS、可部署骨架
-- ⬜ Phase 1 加入行程（行程碼 + 名字）
+- ✅ **Phase 1** 加入行程：建立/加入行程碼、自選名字、即時成員清單、幣別設定（可增減）
 - ⬜ Phase 2 行程 CRUD ｜ Phase 3 多幣別記帳 ｜ Phase 4 天氣 ｜ Phase 5 AI ｜ Phase 6 收尾
 
 ## 結構
 ```
-index.html              連線檢查骨架（Phase 1 起變主應用）
+index.html              主應用（加入畫面 ↔ 行程主畫面）
 config.js               Supabase URL + anon key（公開、可 commit）
 css/app.css             設計系統
 js/supabase.js          client + 匿名登入
+js/constants.js         幣別清單、成員配色
+js/trip.js              行程資料層（建立/加入/成員/幣別/Realtime）
+js/app.js               UI 控制器
 supabase/schema.sql     建表 + RLS + RPC（create_trip / join_trip）
 supabase/functions/ai-assist/   Edge Function（Gemini，Phase 5）
 legacy/                 舊的高雄×台南行程頁（保留參考）

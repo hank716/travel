@@ -8,51 +8,119 @@
   <link rel="stylesheet" href="./css/app.css" />
 </head>
 <body>
-  <div class="page" style="padding: 48px 0;">
-    <header style="margin-bottom: 28px;">
-      <h1 style="margin: 0 0 6px;">日本旅遊規劃系統</h1>
-      <p class="status">多人 · 多幣別 · 即時 — Phase 0 骨架</p>
-    </header>
+  <header class="topbar">
+    <div class="page topbar-inner">
+      <div class="brand">🗾 <span>日本旅遊規劃</span></div>
+      <div id="tripBadge" class="trip-badge" hidden>
+        <span id="tripBadgeTitle"></span>
+        <button id="switchTrip" class="btn btn--ghost btn--sm" type="button">切換行程</button>
+      </div>
+    </div>
+  </header>
 
-    <section class="card">
-      <h2 style="margin-top: 0;">系統連線檢查</h2>
-      <ul style="line-height: 2;">
-        <li>Supabase 連線：<span id="dbStatus" class="status">檢查中…</span></li>
-        <li>匿名身份 (auth.uid)：<span id="authStatus" class="status">檢查中…</span></li>
-      </ul>
-      <p class="status">這頁只用來確認 GitHub Pages + Supabase 管線已通。功能頁面將在 Phase 1 起逐步加上。</p>
+  <main class="page" style="padding: 28px 0 64px;">
+    <!-- 載入中 -->
+    <div id="bootView" class="card center-card"><p class="status">載入中…</p></div>
+
+    <!-- 加入 / 建立行程 -->
+    <section id="joinView" class="join-wrap" hidden>
+      <div class="card join-card">
+        <h1 class="join-title">開始你的旅行</h1>
+        <p class="status">輸入行程碼加入夥伴，或建立一趟新行程。</p>
+
+        <div class="seg" role="tablist">
+          <button class="seg-btn is-active" data-tab="join" type="button">加入行程</button>
+          <button class="seg-btn" data-tab="create" type="button">建立新行程</button>
+        </div>
+
+        <!-- 加入 -->
+        <form id="joinForm" class="form" data-pane="join">
+          <label>行程碼
+            <input name="code" placeholder="例如 JP4F2K" autocomplete="off"
+                   style="text-transform:uppercase; letter-spacing:.18em; font-weight:700;" required />
+          </label>
+          <label>你的名字
+            <input name="name" placeholder="小明" maxlength="20" required />
+          </label>
+          <button class="btn" type="submit">加入</button>
+        </form>
+
+        <!-- 建立 -->
+        <form id="createForm" class="form" data-pane="create" hidden>
+          <label>行程名稱
+            <input name="title" placeholder="2026 春 東京大阪" maxlength="40" required />
+          </label>
+          <div class="row">
+            <label>出發日 <input name="start" type="date" /></label>
+            <label>回程日 <input name="end" type="date" /></label>
+          </div>
+          <label>結算基準幣別
+            <select name="base"></select>
+          </label>
+          <label>啟用幣別（可複選，之後可改）
+            <div id="currencyChecks" class="currency-checks"></div>
+          </label>
+          <label>你的名字
+            <input name="name" placeholder="小明" maxlength="20" required />
+          </label>
+          <button class="btn" type="submit">建立並進入</button>
+        </form>
+
+        <p id="joinError" class="status" data-ok="false" hidden></p>
+      </div>
     </section>
-  </div>
+
+    <!-- 行程主畫面 -->
+    <section id="appView" hidden>
+      <div class="card trip-head">
+        <div class="trip-head-main">
+          <h1 id="tripTitle" style="margin:0 0 4px;"></h1>
+          <p id="tripDates" class="status"></p>
+        </div>
+        <div class="trip-code-box">
+          <span class="status">行程碼（分享給夥伴）</span>
+          <div class="trip-code-row">
+            <code id="tripCode" class="trip-code"></code>
+            <button id="copyCode" class="btn btn--ghost btn--sm" type="button">複製</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h2 class="card-title">同行夥伴 <span id="memberCount" class="status"></span></h2>
+          <div id="memberList" class="member-list"></div>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title">幣別設定</h2>
+          <p class="status">基準：
+            <select id="baseSelect" class="inline-select"></select>
+          </p>
+          <div id="currencyPills" class="currency-pills"></div>
+          <div class="add-currency">
+            <select id="addCurrencySelect" class="inline-select"></select>
+            <button id="addCurrencyBtn" class="btn btn--ghost btn--sm" type="button">＋ 加入幣別</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">功能</h2>
+        <div class="feature-tabs">
+          <span class="feature-tab is-done">加入行程 ✓</span>
+          <span class="feature-tab is-todo">行程規劃 · Phase 2</span>
+          <span class="feature-tab is-todo">多幣別記帳 · Phase 3</span>
+          <span class="feature-tab is-todo">結算 · Phase 3</span>
+          <span class="feature-tab is-todo">天氣 · Phase 4</span>
+          <span class="feature-tab is-todo">地圖 · Phase 2</span>
+          <span class="feature-tab is-todo">AI 助手 · Phase 5</span>
+        </div>
+      </div>
+    </section>
+  </main>
 
   <script src="./config.js"></script>
-  <script type="module">
-    import { supabase, ensureAuth } from "./js/supabase.js";
-
-    const dbEl = document.querySelector("#dbStatus");
-    const authEl = document.querySelector("#authStatus");
-
-    function set(el, ok, text) {
-      el.textContent = text;
-      el.dataset.ok = String(ok);
-    }
-
-    (async () => {
-      try {
-        const user = await ensureAuth();
-        set(authEl, true, "已取得：" + user.id.slice(0, 8) + "…");
-      } catch (e) {
-        set(authEl, false, "失敗：" + e.message);
-      }
-
-      try {
-        // 用一個受 RLS 保護的查詢確認連線（未加入任何行程，預期回 0 筆而非錯誤）
-        const { error } = await supabase.from("trips").select("id").limit(1);
-        if (error) throw error;
-        set(dbEl, true, "正常（schema 已就緒）");
-      } catch (e) {
-        set(dbEl, false, "失敗：" + e.message + "（是否已在 SQL Editor 跑過 schema.sql？）");
-      }
-    })();
-  </script>
+  <script type="module" src="./js/app.js"></script>
 </body>
 </html>

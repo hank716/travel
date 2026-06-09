@@ -68,3 +68,62 @@ input, select, textarea {
 .status { font-size: 13px; color: var(--muted); }
 .status[data-ok="true"]  { color: var(--green); }
 .status[data-ok="false"] { color: var(--accent-dark); }
+
+.btn--sm { padding: 7px 13px; font-size: 13px; }
+
+/* ---------- Topbar ---------- */
+.topbar {
+  position: sticky; top: 0; z-index: 50;
+  background: rgba(255, 248, 239, 0.85);
+  backdrop-filter: saturate(140%) blur(14px);
+  -webkit-backdrop-filter: saturate(140%) blur(14px);
+  border-bottom: 1px solid rgba(125, 91, 55, 0.1);
+}
+.topbar-inner { display: flex; align-items: center; justify-content: space-between; height: 56px; }
+.brand { display: inline-flex; align-items: center; gap: 8px; font-weight: 800; font-size: 16px; }
+.trip-badge { display: inline-flex; align-items: center; gap: 12px; font-weight: 700; }
+
+/* ---------- 加入 / 建立 ---------- */
+.center-card, .join-wrap { display: flex; justify-content: center; }
+.join-card { width: min(520px, 100%); }
+.join-title { margin: 0 0 4px; }
+
+.seg { display: flex; gap: 6px; background: var(--accent-soft); padding: 5px; border-radius: var(--radius-sm); margin: 18px 0; }
+.seg-btn { flex: 1; border: none; background: transparent; color: var(--accent-dark); font-weight: 700; padding: 9px; border-radius: 10px; cursor: pointer; }
+.seg-btn.is-active { background: #fff; box-shadow: var(--shadow-sm); }
+
+.form { display: flex; flex-direction: column; gap: 14px; }
+.form label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; font-weight: 600; color: var(--muted); }
+.form .row { display: flex; gap: 12px; }
+.form .row label { flex: 1; }
+
+.currency-checks { display: flex; flex-wrap: wrap; gap: 8px; }
+.check { flex-direction: row !important; align-items: center; gap: 6px; background: var(--bg-soft); border: 1px solid var(--line); padding: 7px 11px; border-radius: 999px; cursor: pointer; font-weight: 700; }
+.check input { width: auto; }
+
+/* ---------- 行程主畫面 ---------- */
+.trip-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; flex-wrap: wrap; margin-bottom: 18px; }
+.trip-code-box { text-align: right; }
+.trip-code-row { display: inline-flex; align-items: center; gap: 8px; margin-top: 4px; }
+.trip-code { font-size: 22px; font-weight: 800; letter-spacing: .2em; color: var(--accent-dark); background: var(--accent-soft); padding: 4px 12px; border-radius: 10px; }
+
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-bottom: 18px; }
+@media (max-width: 760px) { .grid-2 { grid-template-columns: 1fr; } .trip-head { flex-direction: column; } .trip-code-box { text-align: left; } }
+.card-title { margin: 0 0 14px; font-size: 17px; }
+.inline-select { width: auto; display: inline-block; padding: 5px 9px; }
+
+.member-list { display: flex; flex-wrap: wrap; gap: 10px; }
+.member-chip { display: inline-flex; align-items: center; gap: 8px; background: var(--bg-soft); border: 1px solid var(--line); padding: 6px 12px 6px 6px; border-radius: 999px; font-weight: 700; }
+.avatar { width: 30px; height: 30px; border-radius: 50%; color: #fff; display: grid; place-items: center; font-weight: 800; }
+
+.currency-pills { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 14px; }
+.pill { display: inline-flex; align-items: center; gap: 6px; background: var(--bg-soft); border: 1px solid var(--line); padding: 6px 12px; border-radius: 999px; font-weight: 700; }
+.pill--base { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-dark); }
+.pill-x { border: none; background: transparent; cursor: pointer; font-size: 16px; line-height: 1; color: var(--muted); padding: 0 2px; }
+.pill-x:hover { color: var(--accent-dark); }
+.add-currency { display: flex; gap: 8px; align-items: center; }
+
+.feature-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+.feature-tab { padding: 8px 14px; border-radius: 999px; font-weight: 700; font-size: 13px; }
+.feature-tab.is-done { background: var(--green); color: #fff; }
+.feature-tab.is-todo { background: var(--bg-soft); border: 1px dashed var(--line); color: var(--muted); }
