@@ -1,0 +1,17 @@
+# --- Secrets: 絕對不可進 repo ---
+# service_role key / Gemini key 只放在 Supabase（CLI / Edge Function 環境變數）
+.env
+.env.*
+*.secret
+supabase/.env
+supabase/.temp/
+
+# Supabase CLI 本機資料
+supabase/.branches/
+**/.DS_Store
+
+# 編輯器 / 系統
+.vscode/
+.idea/
+node_modules/
+*.log

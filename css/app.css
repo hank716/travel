@@ -1,0 +1,70 @@
+/* 設計系統 — 沿用 legacy 行程頁的色彩與圓角語彙 */
+:root {
+  --bg: #FFF8EF;
+  --bg-soft: #FFFDF8;
+  --card: rgba(255, 255, 255, 0.85);
+  --ink: #2D241F;
+  --muted: #756A61;
+  --line: rgba(92, 68, 45, 0.16);
+  --accent: #E66F4B;
+  --accent-dark: #BD4F32;
+  --accent-soft: #FFE0D4;
+  --green: #5E7C58;
+  --gold: #D59A39;
+  --shadow: 0 20px 60px rgba(84, 57, 30, 0.13);
+  --shadow-sm: 0 8px 24px rgba(84, 57, 30, 0.08);
+  --radius-lg: 28px;
+  --radius-md: 20px;
+  --radius-sm: 14px;
+  --max: 1160px;
+}
+
+*, *::before, *::after { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+body {
+  margin: 0;
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans TC",
+    "PingFang TC", "Microsoft JhengHei", sans-serif;
+  line-height: 1.7;
+  background:
+    radial-gradient(circle at 10% 0%, rgba(230, 111, 75, 0.18), transparent 34%),
+    radial-gradient(circle at 85% 8%, rgba(213, 154, 57, 0.18), transparent 36%),
+    linear-gradient(180deg, #FFF4E8 0%, #FFFAF2 52%, #F8FBF6 100%);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+.page { width: min(var(--max), calc(100% - 36px)); margin: 0 auto; }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  padding: 22px;
+}
+
+.btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  border: none; cursor: pointer;
+  background: var(--accent); color: #fff;
+  font-weight: 700; font-size: 15px;
+  padding: 12px 20px; border-radius: var(--radius-sm);
+  transition: transform .12s ease, background .2s ease;
+}
+.btn:hover { background: var(--accent-dark); }
+.btn:active { transform: scale(.97); }
+.btn--ghost { background: transparent; color: var(--accent-dark); border: 1px solid var(--line); }
+
+input, select, textarea {
+  font: inherit; color: var(--ink);
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 11px 13px; width: 100%;
+}
+
+.status { font-size: 13px; color: var(--muted); }
+.status[data-ok="true"]  { color: var(--green); }
+.status[data-ok="false"] { color: var(--accent-dark); }

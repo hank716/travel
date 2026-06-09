@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#FFF4E8" />
+  <title>日本旅遊規劃系統</title>
+  <link rel="stylesheet" href="./css/app.css" />
+</head>
+<body>
+  <div class="page" style="padding: 48px 0;">
+    <header style="margin-bottom: 28px;">
+      <h1 style="margin: 0 0 6px;">日本旅遊規劃系統</h1>
+      <p class="status">多人 · 多幣別 · 即時 — Phase 0 骨架</p>
+    </header>
+
+    <section class="card">
+      <h2 style="margin-top: 0;">系統連線檢查</h2>
+      <ul style="line-height: 2;">
+        <li>Supabase 連線：<span id="dbStatus" class="status">檢查中…</span></li>
+        <li>匿名身份 (auth.uid)：<span id="authStatus" class="status">檢查中…</span></li>
+      </ul>
+      <p class="status">這頁只用來確認 GitHub Pages + Supabase 管線已通。功能頁面將在 Phase 1 起逐步加上。</p>
+    </section>
+  </div>
+
+  <script src="./config.js"></script>
+  <script type="module">
+    import { supabase, ensureAuth } from "./js/supabase.js";
+
+    const dbEl = document.querySelector("#dbStatus");
+    const authEl = document.querySelector("#authStatus");
+
+    function set(el, ok, text) {
+      el.textContent = text;
+      el.dataset.ok = String(ok);
+    }
+
+    (async () => {
+      try {
+        const user = await ensureAuth();
+        set(authEl, true, "已取得：" + user.id.slice(0, 8) + "…");
+      } catch (e) {
+        set(authEl, false, "失敗：" + e.message);
+      }
+
+      try {
+        // 用一個受 RLS 保護的查詢確認連線（未加入任何行程，預期回 0 筆而非錯誤）
+        const { error } = await supabase.from("trips").select("id").limit(1);
+        if (error) throw error;
+        set(dbEl, true, "正常（schema 已就緒）");
+      } catch (e) {
+        set(dbEl, false, "失敗：" + e.message + "（是否已在 SQL Editor 跑過 schema.sql？）");
+      }
+    })();
+  </script>
+</body>
+</html>
