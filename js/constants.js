@@ -75,6 +75,17 @@ export function currencyLabel(code) {
   return `${c.flag ? c.flag + " " : ""}${code} · ${c.name}`;
 }
 
+// 不使用小數的幣別（記帳/結算顯示整數）
+export const ZERO_DECIMAL = new Set(["JPY", "KRW", "VND", "CLP", "ISK", "HUF", "TWD", "IDR", "PYG", "RWF", "UGX", "XAF", "XOF", "XPF"]);
+
+// 金額格式化：依幣別小數位 + 千分位 + 符號
+export function fmtMoney(amount, code) {
+  const d = ZERO_DECIMAL.has(code) ? 0 : 2;
+  const sym = CURRENCIES[code]?.symbol || "";
+  const n = (Number(amount) || 0).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+  return `${sym}${n}`;
+}
+
 // 成員頭像配色（建立/加入時自動輪流挑一個）
 export const MEMBER_COLORS = [
   "#E66F4B", "#5E7C58", "#D59A39", "#4B79E6",

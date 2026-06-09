@@ -139,15 +139,81 @@
         <iframe id="mapFrame" class="map-frame" loading="lazy" referrerpolicy="no-referrer-when-downgrade" hidden></iframe>
       </div>
 
+      <div class="card">
+        <div class="card-head">
+          <h2 class="card-title">記帳</h2>
+          <button id="addExpenseBtn" class="btn btn--sm" type="button">＋ 新增支出</button>
+        </div>
+        <div id="expenseSummary" class="expense-summary"></div>
+        <div id="expenseList" class="expense-list"></div>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">結算</h2>
+        <p class="status">全部換算成基準幣別後計算。</p>
+        <div id="balanceList" class="balance-list"></div>
+        <h3 class="day-head" style="margin-top:16px;">建議轉帳</h3>
+        <div id="settleList" class="settle-list"></div>
+      </div>
+
       <div class="feature-tabs" style="margin-top:6px;">
         <span class="feature-tab is-done">加入行程 ✓</span>
         <span class="feature-tab is-done">行程規劃 ✓</span>
         <span class="feature-tab is-done">即時匯率 ✓</span>
-        <span class="feature-tab is-todo">多幣別記帳 · Phase 3</span>
+        <span class="feature-tab is-done">多幣別記帳/結算 ✓</span>
         <span class="feature-tab is-todo">天氣 · Phase 4</span>
         <span class="feature-tab is-todo">AI 助手 · Phase 5</span>
       </div>
     </section>
+
+    <!-- 新增/編輯支出 Modal -->
+    <div id="expenseModal" class="modal" hidden>
+      <div class="modal-box card">
+        <div class="card-head">
+          <h2 id="expenseModalTitle" class="card-title">新增支出</h2>
+          <button id="expenseModalClose" class="btn btn--ghost btn--sm" type="button">✕</button>
+        </div>
+        <form id="expenseForm" class="form">
+          <input type="hidden" name="id" />
+          <label>說明
+            <input name="description" placeholder="拉麵、計程車、門票…" maxlength="60" />
+          </label>
+          <div class="row">
+            <label>金額
+              <input name="amount" type="number" step="any" min="0" inputmode="decimal" placeholder="0" required />
+            </label>
+            <label>幣別
+              <select name="currency" id="expenseCurrency"></select>
+            </label>
+          </div>
+          <div class="row">
+            <label>付款人
+              <select name="paid_by" id="expensePayer"></select>
+            </label>
+            <label>分類
+              <select name="category">
+                <option value="餐飲">🍜 餐飲</option>
+                <option value="交通">🚆 交通</option>
+                <option value="住宿">🏨 住宿</option>
+                <option value="購物">🛍️ 購物</option>
+                <option value="門票">🎟️ 門票</option>
+                <option value="其他">✨ 其他</option>
+              </select>
+            </label>
+          </div>
+          <label>日期 <input name="spent_at" type="date" /></label>
+          <label>分攤給（均分，點選加入／移除）
+            <div id="splitMembers" class="chip-pick"></div>
+          </label>
+          <p id="splitHint" class="status"></p>
+          <div class="row" style="justify-content:flex-end;">
+            <button id="expenseDeleteBtn" class="btn btn--ghost" type="button" hidden>刪除</button>
+            <button class="btn" type="submit">儲存</button>
+          </div>
+          <p id="expenseError" class="status" data-ok="false" hidden></p>
+        </form>
+      </div>
+    </div>
 
     <!-- 新增/編輯項目 Modal -->
     <div id="itemModal" class="modal" hidden>

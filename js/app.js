@@ -1,10 +1,16 @@
 // Phase 1 控制器：路由（加入畫面 ↔ 行程主畫面）、表單、即時成員/幣別。
 import { ensureAuth } from "./supabase.js";
-import { CURRENCIES, CURRENCY_CODES, currencyLabel, pickColor } from "./constants.js";
+import {
+  CURRENCIES, CURRENCY_CODES, currencyLabel, pickColor, fmtMoney, ZERO_DECIMAL,
+} from "./constants.js";
 import { getRates, rateToBase } from "./fx.js";
 import {
   listItems, addItem, updateItem, deleteItem, subscribeItinerary,
 } from "./itinerary.js";
+import {
+  listExpenses, addExpense, updateExpense, deleteExpense, subscribeExpenses,
+} from "./expenses.js";
+import { computeBalances, currencyTotals, settleUp, splitEqually } from "./settle.js";
 import {
   getSavedTrip, saveTrip, clearSavedTrip,
   createTrip, joinTrip, getTrip, getMyMember,
@@ -17,8 +23,12 @@ const { DEFAULT_BASE_CURRENCY, DEFAULT_CURRENCIES } = window.APP_CONFIG;
 
 let unsub = null;       // 行程/成員 realtime 取消訂閱
 let unsubItin = null;   // 行程項目 realtime 取消訂閱
+let unsubExp = null;    // 記帳 realtime 取消訂閱
 let createCurrencies = new Set(); // 建立行程時已選的幣別
-const state = { trip: null, me: null, activeDay: null, mapInit: false };
+const state = {
+  trip: null, me: null, activeDay: null, mapInit: false,
+  members: [], currencies: [], splitSel: new Set(),
+};
 
 // ---------- 視圖切換 ----------
 function show(view) {
@@ -140,6 +150,7 @@ async function onCreateSubmit(e) {
 async function enterTrip(tripId) {
   if (unsub) { unsub(); unsub = null; }
   if (unsubItin) { unsubItin(); unsubItin = null; }
+  if (unsubExp) { unsubExp(); unsubExp = null; }
   const trip = await getTrip(tripId);
   state.trip = trip;
   state.me = await getMyMember(tripId);
@@ -149,6 +160,7 @@ async function enterTrip(tripId) {
   $("#mapTitle").textContent = "點行程項目的「地圖」即可在此顯示";
   await renderTrip(trip);
   await renderItinerary(trip);
+  await renderExpenses(trip);
   show("appView");
 
   // 頂部徽章
@@ -159,6 +171,8 @@ async function enterTrip(tripId) {
   unsub = subscribeTrip(tripId, () => renderTrip(trip).catch(console.error));
   // 即時：行程項目變動就重畫
   unsubItin = subscribeItinerary(tripId, () => renderItinerary(trip).catch(console.error));
+  // 即時：記帳變動就重畫
+  unsubExp = subscribeExpenses(tripId, () => renderExpenses(trip).catch(console.error));
 }
 
 async function renderTrip(trip) {
@@ -172,6 +186,8 @@ async function renderTrip(trip) {
     getTripCurrencies(trip.id),
   ]);
   const me = await getMyMember(trip.id);
+  state.members = members;
+  state.currencies = currencies;
 
   // 成員
   $("#memberCount").textContent = `（${members.length} 人）`;
@@ -420,6 +436,195 @@ async function onItemDelete() {
   } catch (err) { alert(humanError(err)); }
 }
 
+// ---------- 記帳 + 結算 ----------
+const EXP_ICON = { 餐飲: "🍜", 交通: "🚆", 住宿: "🏨", 購物: "🛍️", 門票: "🎟️", 其他: "✨" };
+
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+async function renderExpenses(trip) {
+  const base = trip.base_currency;
+  const expenses = await listExpenses(trip.id);
+  const memberById = new Map(state.members.map((m) => [m.id, m]));
+
+  // 摘要
+  const { byCurrency, base: baseTotal } = currencyTotals(expenses);
+  const curParts = [...byCurrency.entries()]
+    .map(([c, a]) => `<span class="sum-pill">${fmtMoney(a, c)} <small>${c}</small></span>`).join("");
+  $("#expenseSummary").innerHTML = `
+    <div class="sum-total">總支出 ≈ <strong>${fmtMoney(baseTotal, base)}</strong> <small>${base}</small></div>
+    <div class="sum-currencies">${curParts || '<span class="status">尚無支出</span>'}</div>`;
+
+  // 清單
+  const list = $("#expenseList");
+  if (!expenses.length) {
+    list.innerHTML = `<p class="status">還沒有任何支出，點「＋ 新增支出」開始記帳。</p>`;
+  } else {
+    list.innerHTML = expenses.map((e) => renderExpenseRow(e, memberById, base)).join("");
+    list.querySelectorAll("[data-exp-edit]").forEach((b) =>
+      (b.onclick = () => openExpenseModal(expenses.find((x) => x.id === b.dataset.expEdit))));
+  }
+
+  renderSettlement(expenses, base);
+}
+
+function renderExpenseRow(e, memberById, base) {
+  const payer = memberById.get(e.paid_by);
+  const inBase = Number(e.amount) * (Number(e.rate_to_base) || 1);
+  const names = (e.expense_splits || []).map((s) => memberById.get(s.member_id)?.display_name).filter(Boolean);
+  return `
+    <div class="exp-row" role="button" tabindex="0" data-exp-edit="${e.id}">
+      <div class="exp-icon">${EXP_ICON[e.category] || "•"}</div>
+      <div class="exp-body">
+        <div class="exp-top">
+          <span class="exp-desc">${escapeHtml(e.description || e.category || "支出")}</span>
+          <span class="exp-amt">${fmtMoney(e.amount, e.currency)} <small>${e.currency}</small></span>
+        </div>
+        <div class="exp-sub status">
+          ${payer ? escapeHtml(payer.display_name) + " 付" : "未指定付款人"}
+          ${e.currency !== base ? " · ≈ " + fmtMoney(inBase, base) : ""}
+          · ${names.length ? "分 " + names.length + " 人" : "未分帳"}
+          ${e.spent_at ? " · " + e.spent_at.slice(0, 10) : ""}
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderSettlement(expenses, base) {
+  const balances = computeBalances(expenses, state.members, base);
+  $("#balanceList").innerHTML = balances.map((b) => {
+    const cls = b.net > 0.005 ? "pos" : b.net < -0.005 ? "neg" : "zero";
+    const txt = b.net > 0.005 ? "應收 " + fmtMoney(b.net, base)
+      : b.net < -0.005 ? "應付 " + fmtMoney(-b.net, base) : "結清";
+    return `<div class="bal-row">
+      <span class="avatar avatar--sm" style="background:${b.member.color}">${(b.member.display_name || "?").slice(0, 1)}</span>
+      <span class="bal-name">${escapeHtml(b.member.display_name)}</span>
+      <span class="bal-net ${cls}">${txt}</span>
+    </div>`;
+  }).join("");
+
+  const tx = settleUp(balances);
+  $("#settleList").innerHTML = tx.length
+    ? tx.map((t) => `<div class="settle-row">
+        <span>${escapeHtml(t.from.display_name)}</span>
+        <span class="arrow">→</span>
+        <span>${escapeHtml(t.to.display_name)}</span>
+        <strong>${fmtMoney(t.amount, base)}</strong>
+      </div>`).join("")
+    : `<p class="status">目前都結清，無需轉帳。</p>`;
+}
+
+// ---------- 支出 Modal ----------
+function openExpenseModal(exp) {
+  if (!state.members.length) { alert("尚未載入成員，請稍候再試。"); return; }
+  const f = $("#expenseForm");
+  f.reset();
+  $("#expenseError").hidden = true;
+  const editing = !!exp;
+  $("#expenseModalTitle").textContent = editing ? "編輯支出" : "新增支出";
+  $("#expenseDeleteBtn").hidden = !editing;
+  f.id.value = exp?.id || "";
+
+  $("#expensePayer").innerHTML = state.members
+    .map((m) => `<option value="${m.id}">${escapeHtml(m.display_name)}</option>`).join("");
+  const curs = state.currencies.length ? state.currencies : [state.trip.base_currency];
+  $("#expenseCurrency").innerHTML = curs
+    .map((c) => `<option value="${c}">${currencyLabel(c)}</option>`).join("");
+
+  if (exp) {
+    f.description.value = exp.description || "";
+    f.amount.value = exp.amount;
+    $("#expenseCurrency").value = exp.currency;
+    if (exp.paid_by) $("#expensePayer").value = exp.paid_by;
+    f.category.value = exp.category || "餐飲";
+    f.spent_at.value = exp.spent_at ? exp.spent_at.slice(0, 10) : todayStr();
+    state.splitSel = new Set((exp.expense_splits || []).map((s) => s.member_id));
+  } else {
+    f.spent_at.value = todayStr();
+    if (state.me) $("#expensePayer").value = state.me.id;
+    state.splitSel = new Set(state.members.map((m) => m.id)); // 預設全員均分
+  }
+  renderSplitChips();
+  updateSplitHint();
+  $("#expenseModal").hidden = false;
+}
+
+function closeExpenseModal() { $("#expenseModal").hidden = true; }
+
+function renderSplitChips() {
+  const wrap = $("#splitMembers");
+  wrap.innerHTML = state.members.map((m) => {
+    const on = state.splitSel.has(m.id);
+    return `<button type="button" class="chip-toggle ${on ? "is-on" : ""}" data-split="${m.id}">
+      <span class="avatar avatar--sm" style="background:${m.color}">${(m.display_name || "?").slice(0, 1)}</span>
+      ${escapeHtml(m.display_name)}
+    </button>`;
+  }).join("");
+  wrap.querySelectorAll("[data-split]").forEach((b) => (b.onclick = () => {
+    const id = b.dataset.split;
+    if (state.splitSel.has(id)) state.splitSel.delete(id); else state.splitSel.add(id);
+    renderSplitChips(); updateSplitHint();
+  }));
+}
+
+function updateSplitHint() {
+  const amount = parseFloat($("#expenseForm").amount.value) || 0;
+  const cur = $("#expenseCurrency").value;
+  const n = state.splitSel.size;
+  const hint = $("#splitHint");
+  if (!n) { hint.textContent = "請至少選一人分攤"; return; }
+  hint.textContent = `${n} 人均分，每人約 ${fmtMoney(amount / n, cur)}`;
+}
+
+async function onExpenseSubmit(e) {
+  e.preventDefault();
+  const f = e.target;
+  const errEl = $("#expenseError");
+  const showErr = (m) => { errEl.textContent = m; errEl.hidden = false; };
+  const amount = parseFloat(f.amount.value);
+  if (!(amount > 0)) return showErr("金額需大於 0。");
+  const currency = $("#expenseCurrency").value;
+  const memberIds = [...state.splitSel];
+  if (!memberIds.length) return showErr("請至少選一人分攤。");
+  try {
+    setBusy(f, true);
+    const base = state.trip.base_currency;
+    let rate = 1;
+    if (currency !== base) {
+      const rates = await getRates(base);
+      rate = rateToBase(currency, rates, base) ?? 1;
+    }
+    const splits = splitEqually(amount, memberIds, ZERO_DECIMAL.has(currency));
+    const payload = {
+      paid_by: $("#expensePayer").value || null,
+      amount, currency, rate_to_base: rate,
+      category: f.category.value,
+      description: f.description.value.trim() || null,
+      spent_at: f.spent_at.value ? new Date(f.spent_at.value).toISOString() : new Date().toISOString(),
+    };
+    if (f.id.value) await updateExpense(f.id.value, payload, splits);
+    else await addExpense(state.trip.id, payload, splits);
+    closeExpenseModal();
+    await renderExpenses(state.trip);
+  } catch (err) {
+    showErr(humanError(err));
+  } finally {
+    setBusy(f, false);
+  }
+}
+
+async function onExpenseDelete() {
+  const id = $("#expenseForm").id.value;
+  if (!id || !confirm("確定刪除這筆支出？")) return;
+  try {
+    await deleteExpense(id);
+    closeExpenseModal();
+    await renderExpenses(state.trip);
+  } catch (err) { alert(humanError(err)); }
+}
+
 // ---------- 共用 ----------
 function setBusy(form, busy) {
   form.querySelectorAll("button, input, select").forEach((el) => (el.disabled = busy));
@@ -486,6 +691,7 @@ async function boot() {
     clearSavedTrip();
     if (unsub) { unsub(); unsub = null; }
     if (unsubItin) { unsubItin(); unsubItin = null; }
+    if (unsubExp) { unsubExp(); unsubExp = null; }
     $("#tripBadge").hidden = true;
     showJoin();
   };
@@ -502,6 +708,17 @@ async function boot() {
   $("#itemDeleteBtn").onclick = onItemDelete;
   $("#itemModal").addEventListener("click", (e) => {
     if (e.target.id === "itemModal") closeItemModal(); // 點背景關閉
+  });
+
+  // 支出 modal
+  $("#addExpenseBtn").onclick = () => openExpenseModal(null);
+  $("#expenseModalClose").onclick = closeExpenseModal;
+  $("#expenseForm").addEventListener("submit", onExpenseSubmit);
+  $("#expenseDeleteBtn").onclick = onExpenseDelete;
+  $("#expenseForm").amount.addEventListener("input", updateSplitHint);
+  $("#expenseCurrency").addEventListener("change", updateSplitHint);
+  $("#expenseModal").addEventListener("click", (e) => {
+    if (e.target.id === "expenseModal") closeExpenseModal();
   });
 
   try {
