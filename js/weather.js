@@ -154,7 +154,7 @@ async function resolveAreas(days) {
       })),
     });
     const map = {};
-    for (const a of areas || []) if (a && a.date && a.area) map[a.date] = a.area;
+    for (const a of areas || []) if (a && a.date) map[a.date] = { area: a.area || "", geo: a.geo || a.area || "" };
     return map;
   } catch {
     return {}; // AI 失敗 → 後面以原始地名回退
@@ -173,8 +173,10 @@ async function resolveEntries(days) {
         // 已快取座標，直接用
         geo = { lat: it.lat, lon: it.lng, name: it.weather_area || it.location_name || dd.query };
       } else {
-        area = areaByDate[dd.date] || null;
-        geo = (area ? await geocode(area) : null)
+        const resolved = areaByDate[dd.date] || null;     // { area, geo } 或 null
+        area = resolved?.area || null;
+        geo = (resolved?.geo ? await geocode(resolved.geo) : null)
+          || (area ? await geocode(area) : null)
           || await geocode(it.location_name || dd.query)
           || (it.map_query ? await geocode(it.map_query) : null);
         // 寫回快取（座標 + 行政區標籤），下次與夥伴都免再呼叫 AI

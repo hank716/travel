@@ -84,17 +84,15 @@ function districtsPrompt(payload: Record<string, unknown>): string {
     `- date=${d.date}｜地點：${[d.title, d.location_name, d.map_query].filter(Boolean).join("、")}`
   ).join("\n");
   return [
-    "你是地理助理。根據每天的行程地點，判斷它所在的『行政區』，用於查詢天氣。",
-    "規則：",
-    "- 台灣回到「縣市+區」例如「高雄市左營區」「臺南市安平區」；",
-    "- 日本回到「都道府縣+市區町村」例如「東京都台東区」「大阪市中央区」；",
-    "- 其他國家回到「城市」名稱（英文或當地語皆可，例如 Tokyo、Paris）；",
-    "- 只輸出該地點實際所在的行政區，不要加說明。",
+    "你是地理助理。根據每天的行程地點，判斷它所在的行政區，用於查詢天氣。",
+    "每天回兩個欄位：",
+    "- area：給人看的行政區（中文）。台灣用「縣市+區」如「高雄市左營區」；日本用「都道府縣+市區町村」如「東京都台東区」；其他國家用城市名。",
+    "- geo：給地理編碼 API 搜尋用的『羅馬拼音/英文』地名（重要：不要中文、不要含上層縣市），例如左營→Zuoying、台東区→Taito、安平→Anping；若不確定區級拼音就給城市英文名，如 Kaohsiung、Tokyo、Osaka、Paris。",
     "",
     "行程：",
     lines,
     "",
-    '只輸出 JSON 陣列，格式：[{"date":"YYYY-MM-DD","area":"行政區"}]，date 必須與輸入相同。',
+    '只輸出 JSON 陣列，格式：[{"date":"YYYY-MM-DD","area":"行政區中文","geo":"RomanizedName"}]，date 必須與輸入相同。',
   ].join("\n");
 }
 
