@@ -248,6 +248,7 @@ body.in-trip .drawer-backdrop.show { display: block; }
 /* ---------- AI 輸出 ---------- */
 .ai-out { white-space: pre-wrap; line-height: 1.8; }
 .ai-out.loading { color: var(--muted); }
+.ai-itin-input { width: 100%; box-sizing: border-box; resize: vertical; font: inherit; line-height: 1.6; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg); color: var(--ink); }
 
 /* ---------- 管理頁 ---------- */
 .admin-list { display: flex; flex-direction: column; gap: 10px; }

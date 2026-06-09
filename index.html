@@ -73,11 +73,6 @@
           <label>行程名稱
             <input name="title" placeholder="2026 春 東京大阪" maxlength="40" required />
           </label>
-          <label>自訂行程碼（選填，留空自動產生）
-            <input name="code" placeholder="例如 JAPAN26" maxlength="12" autocomplete="off"
-                   style="text-transform:uppercase; letter-spacing:.12em;" />
-            <small class="status">3–12 碼英文或數字。</small>
-          </label>
           <div class="row">
             <label>出發日 <input name="start" type="date" /></label>
             <label>回程日 <input name="end" type="date" /></label>
@@ -123,20 +118,12 @@
               <h1 id="tripTitle" style="margin:0 0 4px;"></h1>
               <p id="tripDates" class="status"></p>
             </div>
-            <div class="trip-code-box">
-              <span class="status">行程碼（分享給夥伴）</span>
-              <div class="trip-code-row">
-                <code id="tripCode" class="trip-code"></code>
-                <button id="copyCode" class="btn btn--ghost btn--sm" type="button">複製</button>
-              </div>
-            </div>
           </div>
 
           <div class="grid-2">
             <div class="card">
               <div class="card-head">
                 <h2 class="card-title">同行夥伴 <span id="memberCount" class="status"></span></h2>
-                <button id="addMemberBtn" class="btn btn--ghost btn--sm" type="button" hidden>＋ 新增成員帳號</button>
               </div>
               <div id="memberList" class="member-list"></div>
             </div>
@@ -157,7 +144,7 @@
 
         <!-- 沒選行程時的提示 -->
         <div id="noTripHint" class="card" hidden>
-          <p class="status">還沒有選擇行程。從上方「我的行程」進入一趟，或用「＋ 建立」「加入 / 登入」開始。</p>
+          <p class="status">還沒有選擇行程。從上方「我的行程」點一趟進入；行程由管理員建立與指派。</p>
         </div>
       </section>
 
@@ -404,11 +391,12 @@
           <h2 class="card-title">✨ AI 建議行程</h2>
           <button id="aiItinClose" class="btn btn--ghost btn--sm" type="button">✕</button>
         </div>
-        <div class="add-currency" style="margin-bottom:10px;">
-          <input id="aiItinPrefs" placeholder="偏好：美食、文化、親子、購物…（可留空）" />
+        <textarea id="aiItinPrefs" class="ai-itin-input" rows="6"
+          placeholder="偏好（美食、文化、親子…），或直接貼上你整理好的資料（支援 Markdown，例如每天的景點/餐廳清單）。留空也可以。"></textarea>
+        <div class="row" style="justify-content:flex-end; margin:10px 0;">
           <button id="aiItinGo" class="btn btn--sm" type="button">產生</button>
         </div>
-        <p class="status">會參考這趟的地區與日期，建議的項目可逐筆加入行程。</p>
+        <p class="status">會參考這趟的地區與日期；若貼上已整理的資料，AI 會優先據此排成可逐筆加入的項目。</p>
         <div id="aiItinOut" class="itinerary-list" style="margin-top:10px;"></div>
       </div>
     </div>

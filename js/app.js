@@ -163,7 +163,7 @@ async function onCreateSubmit(e) {
       currencies,
       name: f.name.value.trim(),
       color: pickColor(),
-      code: f.code.value.trim() || null,
+      code: null, // 行程碼已不對外使用；交由後端自動產生內部碼
     });
     saveTrip(trip);
     closeTripModal();
@@ -194,10 +194,9 @@ async function enterTrip(tripId) {
 
   document.body.classList.add("in-trip");
   show("appView");
-  // 頂部徽章 + 抽屜標題
+  // 頂部徽章顯示目前行程（抽屜標題維持 App 品牌，避免左右重複）
   $("#tripBadge").hidden = false;
   $("#tripBadgeTitle").textContent = trip.title;
-  $("#drawerTripTitle").textContent = trip.title;
   renderOverviewState();
   renderMyTrips(await listMyTrips());
   // 進入時依 hash 決定起始頁
@@ -218,7 +217,6 @@ async function renderTrip(trip) {
   $("#tripTitle").textContent = trip.title;
   $("#tripDates").textContent = trip.start_date
     ? `${trip.start_date} → ${trip.end_date || "?"}` : "尚未設定日期";
-  $("#tripCode").textContent = trip.code;
 
   const [members, currencies] = await Promise.all([
     listMembers(trip.id),
@@ -230,9 +228,8 @@ async function renderTrip(trip) {
   state.me = me;
   const isAdmin = !!me?.is_admin;
 
-  // 成員（管理員可移除；未登入者標示）
+  // 成員（管理員可移除；未登入者標示）。新增成員帳號統一在「管理」頁。
   $("#memberCount").textContent = `（${members.length} 人）`;
-  $("#addMemberBtn").hidden = !isAdmin;
   $("#memberList").innerHTML = members.map((m) => {
     const isMe = me && m.id === me.id;
     return `<div class="member-chip">
@@ -256,8 +253,7 @@ function renderOverviewState() {
   $("#overviewTripDetail").hidden = !has;
   $("#noTripHint").hidden = has;
   $("#tripBadge").hidden = !has;
-  if (has) { $("#tripBadgeTitle").textContent = state.trip.title; $("#drawerTripTitle").textContent = state.trip.title; }
-  else { $("#drawerTripTitle").textContent = "旅程規劃"; }
+  if (has) $("#tripBadgeTitle").textContent = state.trip.title;
   // 沒選行程時，行程/記帳/天氣分頁不可用；總覽與管理頁永遠可用
   document.querySelectorAll(".nav-item").forEach((b) => {
     if (b.dataset.page !== "overview" && b.dataset.page !== "admin") b.classList.toggle("is-disabled", !has);
@@ -281,8 +277,7 @@ async function openMemberModal(withTripSelect = false) {
   }
   $("#memberModal").hidden = false;
 }
-function onAddMember() { openMemberModal(false); }       // overview：指派到目前行程
-function onAdminAddMember() { openMemberModal(true); }    // 管理頁：可選行程
+function onAdminAddMember() { openMemberModal(true); }    // 管理頁：建立帳號並可選行程
 
 async function onMemberSubmit(e) {
   e.preventDefault();
@@ -323,7 +318,7 @@ async function renderAdmin() {
     <div class="admin-row">
       <div class="admin-row-main">
         <strong>${escapeHtml(t.title)}</strong>
-        <span class="status">${t.code}${t.start_date ? " · " + t.start_date + "~" + (t.end_date || "?") : ""}</span>
+        <span class="status">${t.start_date ? t.start_date + " ~ " + (t.end_date || "?") : "未設定日期"}</span>
       </div>
       <div class="admin-row-actions">
         <button class="btn btn--ghost btn--sm" data-enter-trip="${t.id}">進入</button>
@@ -431,6 +426,7 @@ function showLogin() {
   document.body.classList.remove("in-trip");
   closeDrawer();
   state.profile = null; state.trip = null;
+  $("#tripBadge").hidden = true; $("#tripBadgeTitle").textContent = "";
   $("#loginForm").hidden = false;
   loginError("");
   show("loginView");
@@ -478,7 +474,7 @@ async function onAiItinGo() {
     const area = items.find((i) => i.weather_area)?.weather_area || "";
     const { items: sug } = await callAI("suggest_itinerary", {
       trip: { title: state.trip.title, start: state.trip.start_date, end: state.trip.end_date },
-      area, days, existing: items.map((i) => i.title), prefs: $("#aiItinPrefs").value.trim(),
+      area, days, existing: items.map((i) => i.title), notes: $("#aiItinPrefs").value.trim(),
     });
     if (!Array.isArray(sug) || !sug.length) { out.innerHTML = `<p class="status">沒有建議，換個偏好再試。</p>`; return; }
     out.innerHTML = sug.map((s, idx) => `
@@ -1016,7 +1012,7 @@ function renderMyTrips(trips) {
     <div class="my-trip ${t.id === cur ? "is-current" : ""}">
       <button class="my-trip-main" type="button" data-enter="${t.id}">
         <span class="my-trip-title">${escapeHtml(t.title)}${t.id === cur ? ' <small class="status">· 使用中</small>' : ""}</span>
-        <span class="status">${t.code}${t.start_date ? " · " + t.start_date : ""}</span>
+        <span class="status">${t.start_date ? t.start_date + (t.end_date ? " ~ " + t.end_date : "") : "未設定日期"}</span>
       </button>
     </div>`).join("");
   list.querySelectorAll("[data-enter]").forEach((b) =>
@@ -1056,7 +1052,6 @@ async function boot() {
   // 建立行程 / 新增成員帳號
   $("#tripModalClose").onclick = closeTripModal;
   $("#tripModal").addEventListener("click", (e) => { if (e.target.id === "tripModal") closeTripModal(); });
-  $("#addMemberBtn").onclick = onAddMember;
   $("#memberModalClose").onclick = () => ($("#memberModal").hidden = true);
   $("#memberForm").addEventListener("submit", onMemberSubmit);
   $("#memberModal").addEventListener("click", (e) => { if (e.target.id === "memberModal") $("#memberModal").hidden = true; });
@@ -1077,12 +1072,6 @@ async function boot() {
   // 記帳語意輸入
   $("#nlExpenseBtn").onclick = onNlExpense;
   $("#nlExpenseInput").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); onNlExpense(); } });
-
-  $("#copyCode").onclick = async () => {
-    await navigator.clipboard.writeText($("#tripCode").textContent);
-    $("#copyCode").textContent = "已複製";
-    setTimeout(() => ($("#copyCode").textContent = "複製"), 1500);
-  };
 
   // 行程項目 modal
   $("#addItemBtn").onclick = () => openItemModal(null);
