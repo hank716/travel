@@ -29,12 +29,11 @@ async function gemini(prompt: string, opts: { jsonOut?: boolean; maxTokens?: num
   const generationConfig: Record<string, unknown> = {
     temperature: opts.jsonOut ? 0.2 : 0.7,
     maxOutputTokens: opts.maxTokens ?? 800,
+    // gemini-flash-latest 是 thinking 模型，思考會吃掉輸出額度造成截斷/空結果。
+    // 我們的任務都是簡單格式化，一律關閉思考，輸出才穩定完整。
+    thinkingConfig: { thinkingBudget: 0 },
   };
-  if (opts.jsonOut) {
-    generationConfig.responseMimeType = "application/json";
-    // 2.5-flash 是 thinking 模型，會吃掉輸出額度導致結構化結果為空 → 結構化模式關閉思考
-    generationConfig.thinkingConfig = { thinkingBudget: 0 };
-  }
+  if (opts.jsonOut) generationConfig.responseMimeType = "application/json";
   const body = JSON.stringify({
     contents: [{ role: "user", parts: [{ text: prompt }] }],
     generationConfig,
@@ -49,7 +48,9 @@ async function gemini(prompt: string, opts: { jsonOut?: boolean; maxTokens?: num
       });
       if (res.ok) {
         const data = await res.json();
-        return (data?.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text).join("") ?? "").trim();
+        // 只取一般輸出片段，濾掉 thought（思考）片段，避免思考/JSON 殘片外洩到結果
+        const parts = (data?.candidates?.[0]?.content?.parts ?? []) as Array<{ text?: string; thought?: boolean }>;
+        return parts.filter((p) => !p.thought && typeof p.text === "string").map((p) => p.text).join("").trim();
       }
       const t = await res.text();
       lastErr = `${res.status}: ${t.slice(0, 160)}`;
@@ -71,13 +72,15 @@ function weatherPrompt(payload: Record<string, unknown>): string {
     `- ${d.date} ${d.city}：${d.condition}，氣溫 ${d.tmin ?? "?"}~${d.tmax ?? "?"}°C，降雨機率 ${d.pop ?? "?"}%${d.source === "climate" ? "（去年同期參考）" : ""}`
   ).join("\n");
   return [
-    `你是貼心的旅遊助理。以下是「${trip.title ?? "這趟旅行"}」每天的天氣：`,
+    `「${trip.title ?? "這趟旅行"}」每天天氣如下：`,
     lines,
     "",
-    "請用繁體中文，針對每一天給 1–2 句具體建議，包含：",
-    "1) 穿搭與攜帶物（如雨具、防曬、保暖）；",
-    "2) 若當天降雨機率偏高或天氣不佳，建議把室內景點（美術館、博物館、購物中心）排在該時段。",
-    "語氣friendly、條列、精簡，不要重複天氣數據本身。",
+    "請用繁體中文，針對『每一天』各給建議。格式（直接照做，不要開場白、不要結尾招呼語）：",
+    "**M/D（城市）** 後面接 1–2 句具體建議。",
+    "每天要根據當天的實際數據給重點：",
+    "- 依氣溫給穿搭（如 25°C 以上短袖、15°C 以下外套、溫差大洋蔥式）；",
+    "- 降雨機率 ≥50% 一定提醒帶雨具，並建議把室內景點安排在那天；高溫/高 UV 提醒防曬補水；風大提醒。",
+    "只輸出這些每日建議（純文字/Markdown），不要輸出 JSON、不要客套開頭或結尾。",
   ].join("\n");
 }
 
@@ -155,7 +158,7 @@ serve(async (req) => {
     const { mode, ...payload } = await req.json().catch(() => ({}));
     switch (mode) {
       case "weather_suggest": {
-        const text = await gemini(weatherPrompt(payload));
+        const text = await gemini(weatherPrompt(payload), { maxTokens: 1400 });
         return json({ text });
       }
       case "resolve_districts": {
