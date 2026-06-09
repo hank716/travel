@@ -99,7 +99,7 @@ function openAccountMenu() {
   const p = state.profile;
   const name = p ? (p.username || p.email || "使用者") : "使用者";
   menu.innerHTML = `
-    <div class="popover-head">${escapeHtml(name)}${isAdmin() ? " 👑 管理員" : ""}</div>
+    <div class="popover-head">${escapeHtml(name)}${isAdmin() ? "（管理員）" : ""}</div>
     <div class="popover-sep"></div>
     <button class="popover-item" type="button" data-logout="1">登出</button>`;
   menu.querySelector("[data-logout]").onclick = async () => { closePopovers(); await logout(); showLogin(); };
@@ -260,16 +260,16 @@ async function enterTrip(tripId) {
   unsubItin = subscribeItinerary(tripId, () => {
     state.weatherLoaded = false;
     renderItinerary(trip).catch(console.error);
+    renderDashboard().catch(() => {});
   });
   // 即時：記帳變動就重畫
-  unsubExp = subscribeExpenses(tripId, () => renderExpenses(trip).catch(console.error));
+  unsubExp = subscribeExpenses(tripId, () => {
+    renderExpenses(trip).catch(console.error);
+    renderDashboard().catch(() => {});
+  });
 }
 
 async function renderTrip(trip) {
-  $("#tripTitle").textContent = trip.title;
-  $("#tripDates").textContent = trip.start_date
-    ? `${trip.start_date} → ${trip.end_date || "?"}` : "尚未設定日期";
-
   const [members, currencies] = await Promise.all([
     listMembers(trip.id),
     getTripCurrencies(trip.id),
@@ -286,7 +286,7 @@ async function renderTrip(trip) {
     const isMe = me && m.id === me.id;
     return `<div class="member-chip">
       <span class="avatar" style="background:${m.color}">${(m.display_name || "?").slice(0, 1)}</span>
-      <span>${escapeHtml(m.display_name)}${m.is_admin ? " 👑" : ""}${isMe ? " <small class='status'>(你)</small>" : ""}${m.auth_uid ? "" : " <small class='status'>未登入</small>"}</span>
+      <span>${escapeHtml(m.display_name)}${m.is_admin ? ' <span class="tag">管理員</span>' : ""}${isMe ? " <small class='status'>(你)</small>" : ""}${m.auth_uid ? "" : " <small class='status'>未登入</small>"}</span>
       ${isAdmin && !isMe ? `<button class="pill-x" type="button" data-rm-member="${m.id}" data-name="${escapeAttr(m.display_name)}" title="移除">×</button>` : ""}
     </div>`;
   }).join("");
@@ -297,6 +297,53 @@ async function renderTrip(trip) {
   renderBaseSelect(trip);
   renderCurrencyPills(trip, currencies);
   renderAddCurrency(trip, currencies);
+
+  // 總覽儀表板（摘要 / 統計 / 接下來的行程）
+  renderDashboard().catch(() => {});
+}
+
+// ---------- 總覽儀表板 ----------
+function daysBetween(a, b) {
+  return Math.round((new Date(b + "T00:00:00") - new Date(a + "T00:00:00")) / 86400000);
+}
+function tripSummaryHtml(trip) {
+  if (!trip.start_date) return `<span class="status">尚未設定日期，到「管理」頁編輯行程可加上日期。</span>`;
+  const start = trip.start_date, end = trip.end_date || trip.start_date;
+  const totalDays = daysBetween(start, end) + 1;
+  const today = todayStr();
+  let badge;
+  if (today < start) badge = `距出發 ${daysBetween(today, start)} 天`;
+  else if (today > end) badge = "已結束";
+  else badge = `旅程進行中 · 第 ${daysBetween(start, today) + 1} 天`;
+  const range = end === start ? start : `${start} – ${end}`;
+  return `<span>${range}</span><span class="ts-dot">·</span><span>${totalDays} 天</span><span class="ts-badge">${badge}</span>`;
+}
+function upcomingHtml(items) {
+  if (!items.length) return `<p class="status">還沒有行程項目，到「行程」頁新增，或用 AI 排行程。</p>`;
+  const dated = items.filter((i) => i.day_date)
+    .sort((a, b) => ((a.day_date + (a.start_time || "")) < (b.day_date + (b.start_time || "")) ? -1 : 1));
+  if (!dated.length) return `<p class="status">行程項目尚未排定日期。</p>`;
+  const today = todayStr();
+  let pick = dated.filter((i) => i.day_date >= today);
+  if (!pick.length) pick = dated;            // 全部過去 → 顯示整體前幾筆
+  return pick.slice(0, 4).map((it) => `
+    <div class="up-row">
+      <span class="up-date">${it.day_date.slice(5)}${it.start_time ? " " + it.start_time.slice(0, 5) : ""}</span>
+      <span class="up-title">${CATEGORY_ICON[it.category] || "•"} ${escapeHtml(it.title)}</span>
+    </div>`).join("");
+}
+async function renderDashboard() {
+  const trip = state.trip;
+  if (!trip) return;
+  $("#tripSummary").innerHTML = tripSummaryHtml(trip);
+  $("#statMembers").textContent = state.members.length || "–";
+  let items = [], expenses = [];
+  try { items = await listItems(trip.id); } catch { /* ignore */ }
+  try { expenses = await listExpenses(trip.id); } catch { /* ignore */ }
+  $("#statItems").textContent = items.length;
+  const { base: baseTotal } = currencyTotals(expenses);
+  $("#statSpend").textContent = fmtMoney(baseTotal, trip.base_currency);
+  $("#upcomingList").innerHTML = upcomingHtml(items);
 }
 
 // 切換「有/無選定行程」的總覽呈現 + 分頁可用性（側欄與底部列同步）
@@ -391,7 +438,7 @@ async function renderAdmin() {
     uBox.innerHTML = (users || []).map((u) => `
       <div class="admin-row">
         <div class="admin-row-main">
-          <strong>${escapeHtml(u.username || u.email || "?")}</strong>${u.is_admin ? " 👑" : ""}
+          <strong>${escapeHtml(u.username || u.email || "?")}</strong>${u.is_admin ? ' <span class="tag">管理員</span>' : ""}
           <span class="status">${escapeHtml(u.email || "")}</span>
           <div class="admin-trips">${(u.trips || []).map((t) =>
             `<span class="pill">${escapeHtml(t.title)} ${u.is_admin ? "" : `<button class="pill-x" data-unassign="${u.id}|${t.id}" title="移出">×</button>`}</span>`).join("") || '<span class="status">未指派任何行程</span>'}</div>
@@ -1136,6 +1183,8 @@ async function showHub() {
 
 function renderMyTrips(trips) {
   const list = $("#myTripsList");
+  // 頂部已有全域切換器：已在某趟且只有一個行程時，隱藏這張清單卡（避免重複）
+  $("#myTripsCard").hidden = !!state.trip && (trips?.length || 0) <= 1;
   if (!trips || !trips.length) {
     list.innerHTML = isAdmin()
       ? `<p class="status">還沒有行程。到「⚙️ 管理」頁建立一趟。</p>`
@@ -1229,6 +1278,11 @@ async function boot() {
 
   // 分頁路由（側欄 + 底部列）
   document.querySelectorAll(".nav-item, .tab-item").forEach((b) => (b.onclick = () => showPage(b.dataset.page)));
+
+  // 總覽快速統計卡 / 「查看全部」→ 跳頁；成員卡 → 捲到成員區
+  document.querySelectorAll('#view-overview [data-page]').forEach((b) => (b.onclick = () => showPage(b.dataset.page)));
+  document.querySelectorAll('#view-overview [data-scroll]').forEach((b) => (b.onclick = () =>
+    $("#" + b.dataset.scroll)?.scrollIntoView({ behavior: "smooth", block: "start" })));
 
   // 頂部行程切換器 + 帳號選單（popover）
   $("#tripSwitcher").onclick = (e) => { e.stopPropagation(); openTripMenu(); };
