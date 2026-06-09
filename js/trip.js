@@ -79,6 +79,25 @@ export async function deleteTrip(id) {
   if (error) throw error;
 }
 
+// 更新行程設定（標題/日期）
+export async function updateTrip(id, patch) {
+  const { error } = await supabase.from("trips").update(patch).eq("id", id);
+  if (error) throw error;
+}
+
+// 呼叫 admin-users Edge Function（管理員專用）
+export async function adminAction(action, payload = {}) {
+  const { data, error } = await supabase.functions.invoke("admin-users", {
+    body: { action, ...payload },
+  });
+  if (error) {
+    let detail = error.message || "操作失敗";
+    try { const j = await error.context?.json(); if (j?.error) detail = j.error; } catch { /* ignore */ }
+    throw new Error(detail);
+  }
+  return data;
+}
+
 // 以行程碼加入；已是成員則更新名字/顏色
 export async function joinTrip({ code, name, color }) {
   const { data, error } = await supabase.rpc("join_trip", {

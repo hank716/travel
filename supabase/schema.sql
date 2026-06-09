@@ -20,19 +20,21 @@ create table if not exists public.profiles (
   created_at timestamptz not null default now()
 );
 
--- 新使用者註冊 → 建立 profile；若系統尚無管理員，第一位即為管理員
+-- 唯一管理員（寫死）。若要更換，改這裡 + config.js 的 ADMIN_EMAIL。
+-- 新使用者註冊 → 建立 profile；只有寫死的 Email 會是管理員，其餘一律 false。
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
 security definer
 set search_path = public
 as $$
-declare
-  v_is_admin boolean;
 begin
-  select not exists (select 1 from public.profiles p where p.is_admin) into v_is_admin;
   insert into public.profiles (id, username, is_admin)
-  values (new.id, new.raw_user_meta_data ->> 'username', coalesce(v_is_admin, false))
+  values (
+    new.id,
+    new.raw_user_meta_data ->> 'username',
+    lower(new.email) = 'hank.wang.716@gmail.com'
+  )
   on conflict (id) do nothing;
   return new;
 end;
@@ -42,6 +44,11 @@ drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
+
+-- 一次性校正：依 auth.users.email 重設既有 profiles 的 is_admin（確保只有寫死 Email 是 admin）
+update public.profiles p
+  set is_admin = (lower(u.email) = 'hank.wang.716@gmail.com')
+  from auth.users u where u.id = p.id;
 
 -- 目前登入者是否為（全域）管理員
 create or replace function public.is_admin()

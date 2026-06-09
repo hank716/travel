@@ -12,8 +12,10 @@
 - ✅ **Phase 3** 多幣別記帳：支出/分帳、即時匯率快照、各幣別小計、結算（每人餘額 + 最少轉帳）
 - ✅ **多頁面改版**：側邊抽屜導航，拆成 總覽 / 行程 / 記帳 / 天氣 四頁（hash 路由、RWD 桌機常駐側欄）
 - ✅ **Phase 4** 天氣：依行程地點自動地理編碼 → Open-Meteo 逐日預報（超範圍顯示去年同期參考）
-- 🔶 **Phase 5（部分）** AI 天氣建議：Gemini Edge Function `weather_suggest`（需部署 + 設金鑰才會動）
-- ⬜ Phase 5 其餘（AI 排行程 / 記帳語意輸入） ｜ Phase 6 收尾
+- ✅ **Phase 5** AI 助手：Gemini Edge Function `ai-assist`（天氣建議 / AI 排行程 / 記帳語意輸入）— 需部署 + 設金鑰才會動
+- ✅ **帳號制改版**：單一管理員（帳號密碼登入），管理員可建立成員帳號並指派行程
+- ✅ **管理後台**（管理員專屬「⚙️ 管理」頁）：帳號管理（建立/重設密碼/刪除/指派·移出行程）＋ 行程管理（建立/編輯/刪除/進入）— Edge Function `admin-users`
+- ⬜ Phase 6 收尾（PWA 離線 / 日本內容種子 / 手機優化）
 
 ## 結構
 ```
@@ -26,8 +28,10 @@ js/fx.js                即時匯率 + 三層快取
 js/trip.js              行程資料層（建立/加入/成員/幣別/Realtime）
 js/itinerary.js         行程項目資料層（CRUD/Realtime）
 js/app.js               UI 控制器
-supabase/schema.sql     建表 + RLS + RPC（create_trip / join_trip）
-supabase/functions/ai-assist/   Edge Function（Gemini，Phase 5）
+supabase/schema.sql     建表 + RLS + RPC（create_trip / join_trip）+ 單一管理員觸發器
+supabase/reset.sql      清資料重來（A 保留帳號 / B 連帳號清光）
+supabase/functions/ai-assist/     Edge Function（Gemini：天氣 / 排行程 / 記帳語意）
+supabase/functions/admin-users/   Edge Function（service_role：帳號/行程管理後台）
 legacy/                 舊的高雄×台南行程頁（保留參考）
 ```
 

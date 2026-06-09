@@ -1,9 +1,8 @@
 // Supabase Edge Function: admin-users
-// 由管理員呼叫，用 service_role（Supabase 自動注入）建立成員帳號並指派行程。
-// 會先驗證呼叫者是 profiles.is_admin。
-//   supabase functions deploy admin-users
+// 管理員專用（用 Supabase 自動注入的 service_role）。先驗證呼叫者 profiles.is_admin。
+//   supabase functions deploy admin-users --use-api
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -14,6 +13,28 @@ const MEMBER_DOMAIN = "guest.tripplanner.app";
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json" } });
+}
+
+async function listUsers(admin: SupabaseClient) {
+  const [{ data: profs }, usersRes, { data: members }] = await Promise.all([
+    admin.from("profiles").select("id, username, is_admin"),
+    admin.auth.admin.listUsers({ page: 1, perPage: 1000 }),
+    admin.from("members").select("auth_uid, trip_id, display_name, trips(id, title)"),
+  ]);
+  const emailById = new Map((usersRes.data?.users || []).map((u) => [u.id, u.email]));
+  const tripsByUid = new Map<string, Array<{ id: string; title: string }>>();
+  for (const m of members || []) {
+    if (!m.auth_uid) continue;
+    const t = (m as { trips?: { id: string; title: string } }).trips;
+    if (!t) continue;
+    if (!tripsByUid.has(m.auth_uid)) tripsByUid.set(m.auth_uid, []);
+    tripsByUid.get(m.auth_uid)!.push({ id: t.id, title: t.title });
+  }
+  return (profs || []).map((p) => ({
+    id: p.id, username: p.username, is_admin: p.is_admin,
+    email: emailById.get(p.id) || "",
+    trips: tripsByUid.get(p.id) || [],
+  }));
 }
 
 serve(async (req) => {
@@ -29,26 +50,31 @@ serve(async (req) => {
     // 驗證呼叫者為管理員
     const { data: ures, error: uerr } = await admin.auth.getUser(jwt);
     if (uerr || !ures.user) return json({ error: "未登入" }, 401);
-    const { data: prof } = await admin.from("profiles").select("is_admin").eq("id", ures.user.id).maybeSingle();
+    const callerId = ures.user.id;
+    const { data: prof } = await admin.from("profiles").select("is_admin").eq("id", callerId).maybeSingle();
     if (!prof?.is_admin) return json({ error: "僅限管理員" }, 403);
 
     const body = await req.json().catch(() => ({}));
-    if (body.action === "create_member") {
-      const trip_id = body.trip_id;
+    const action = body.action;
+
+    if (action === "list_users") {
+      return json({ users: await listUsers(admin) });
+    }
+
+    if (action === "create_member") {
+      const trip_id = body.trip_id; // 可為 null（只開帳號不指派）
       const display_name = (body.display_name || "").trim();
       const username = (body.username || "").trim().toLowerCase();
       const password = body.password || "";
       const color = body.color || "#5E7C58";
-      if (!trip_id || !display_name || !username || !password) return json({ error: "缺少欄位（行程/顯示名稱/帳號/密碼）" }, 400);
+      if (!display_name || !username || !password) return json({ error: "缺少欄位（顯示名稱/帳號/密碼）" }, 400);
 
       const email = `${username}@${MEMBER_DOMAIN}`;
       let userId: string | null = null;
-
       const { data: created, error: cerr } = await admin.auth.admin.createUser({
         email, password, email_confirm: true, user_metadata: { username },
       });
       if (cerr) {
-        // 可能帳號已存在 → 找回該帳號，改為「加入這趟」
         const { data: existing } = await admin.from("profiles").select("id").eq("username", username).maybeSingle();
         if (existing?.id) userId = existing.id;
         else return json({ error: "建立帳號失敗：" + cerr.message }, 400);
@@ -56,16 +82,55 @@ serve(async (req) => {
         userId = created.user!.id;
         await admin.from("profiles").update({ username }).eq("id", userId);
       }
-
-      // 建立 membership（避免重複）
-      const { data: dup } = await admin.from("members").select("id")
-        .eq("trip_id", trip_id).eq("auth_uid", userId).maybeSingle();
-      if (!dup) {
-        const { error: merr } = await admin.from("members")
-          .insert({ trip_id, auth_uid: userId, display_name, color, is_admin: false });
-        if (merr) return json({ error: "加入行程失敗：" + merr.message }, 400);
+      if (trip_id) {
+        const { data: dup } = await admin.from("members").select("id").eq("trip_id", trip_id).eq("auth_uid", userId).maybeSingle();
+        if (!dup) {
+          const { error: merr } = await admin.from("members").insert({ trip_id, auth_uid: userId, display_name, color, is_admin: false });
+          if (merr) return json({ error: "加入行程失敗：" + merr.message }, 400);
+        }
       }
       return json({ ok: true, user_id: userId, reused: !!cerr });
+    }
+
+    if (action === "reset_password") {
+      if (!body.user_id || !body.password) return json({ error: "缺少欄位" }, 400);
+      const { error } = await admin.auth.admin.updateUserById(body.user_id, { password: body.password });
+      if (error) return json({ error: error.message }, 400);
+      return json({ ok: true });
+    }
+
+    if (action === "delete_user") {
+      if (!body.user_id) return json({ error: "缺少 user_id" }, 400);
+      if (body.user_id === callerId) return json({ error: "不能刪除自己" }, 400);
+      const { data: tp } = await admin.from("profiles").select("is_admin").eq("id", body.user_id).maybeSingle();
+      if (tp?.is_admin) return json({ error: "不能刪除管理員帳號" }, 400);
+      await admin.from("members").delete().eq("auth_uid", body.user_id);
+      const { error } = await admin.auth.admin.deleteUser(body.user_id);
+      if (error) return json({ error: error.message }, 400);
+      return json({ ok: true });
+    }
+
+    if (action === "assign_trip") {
+      const { user_id, trip_id } = body;
+      if (!user_id || !trip_id) return json({ error: "缺少欄位" }, 400);
+      const { data: dup } = await admin.from("members").select("id").eq("trip_id", trip_id).eq("auth_uid", user_id).maybeSingle();
+      if (dup) return json({ ok: true, already: true });
+      let display_name = (body.display_name || "").trim();
+      if (!display_name) {
+        const { data: p } = await admin.from("profiles").select("username").eq("id", user_id).maybeSingle();
+        display_name = p?.username || "成員";
+      }
+      const { error } = await admin.from("members").insert({ trip_id, auth_uid: user_id, display_name, color: "#5E7C58", is_admin: false });
+      if (error) return json({ error: error.message }, 400);
+      return json({ ok: true });
+    }
+
+    if (action === "unassign_trip") {
+      const { user_id, trip_id } = body;
+      if (!user_id || !trip_id) return json({ error: "缺少欄位" }, 400);
+      const { error } = await admin.from("members").delete().eq("trip_id", trip_id).eq("auth_uid", user_id);
+      if (error) return json({ error: error.message }, 400);
+      return json({ ok: true });
     }
 
     return json({ error: "不支援的 action" }, 400);

@@ -10,4 +10,8 @@ window.APP_CONFIG = {
   // 不預設任何特定國家的幣別；只帶基準幣別，其餘由使用者自行加入
   DEFAULT_BASE_CURRENCY: "TWD",
   DEFAULT_CURRENCIES: ["TWD"],
+
+  // 唯一管理員（寫死）。只有這個 Email 註冊會是 admin；前端也用它擋註冊。
+  // 若要更換，記得 supabase/schema.sql 的 handle_new_user 觸發器也要同步改。
+  ADMIN_EMAIL: "hank.wang.716@gmail.com",
 };

@@ -247,6 +247,14 @@ body.in-trip .drawer-backdrop.show { display: block; }
 .ai-out { white-space: pre-wrap; line-height: 1.8; }
 .ai-out.loading { color: var(--muted); }
 
+/* ---------- 管理頁 ---------- */
+.admin-list { display: flex; flex-direction: column; gap: 10px; }
+.admin-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; background: var(--bg-soft); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 12px 14px; flex-wrap: wrap; }
+.admin-row-main { min-width: 0; flex: 1; }
+.admin-row-main .status { display: block; }
+.admin-trips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.admin-row-actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+
 /* 手機：行程項目改為上下堆疊，操作鈕移到下方整列 */
 @media (max-width: 520px) {
   .itin-item { flex-wrap: wrap; }
