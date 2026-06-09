@@ -621,7 +621,8 @@ function tripDayRange() {
   if (!t?.start_date) return [];
   const out = []; const d = new Date(t.start_date + "T00:00:00");
   const end = new Date((t.end_date || t.start_date) + "T00:00:00");
-  while (d <= end) { out.push(d.toISOString().slice(0, 10)); d.setDate(d.getDate() + 1); }
+  // 用本地日期字串，避免 toISOString() 在 UTC+8 把日期往前推一天（少一天）
+  while (d <= end) { out.push(ymd(d)); d.setDate(d.getDate() + 1); }
   return out;
 }
 async function onAiItinGo() {
@@ -980,10 +981,11 @@ async function onItemDelete() {
 // ---------- 記帳 + 結算 ----------
 const EXP_ICON = { 餐飲: "🍜", 交通: "🚆", 住宿: "🏨", 購物: "🛍️", 門票: "🎟️", 其他: "✨" };
 
-function todayStr() {
-  const d = new Date();
+// 本地時區的 YYYY-MM-DD（不要用 toISOString，會被轉成 UTC 而偏一天）
+function ymd(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
+function todayStr() { return ymd(new Date()); }
 
 async function renderExpenses(trip) {
   const base = trip.base_currency;
