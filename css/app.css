@@ -82,8 +82,9 @@ input, select, textarea {
   -webkit-backdrop-filter: saturate(140%) blur(14px);
   border-bottom: 1px solid rgba(125, 91, 55, 0.1);
 }
-.topbar-inner { display: flex; align-items: center; justify-content: space-between; height: 56px; }
+.topbar-inner { display: flex; align-items: center; gap: 10px; height: 56px; }
 .brand { display: inline-flex; align-items: center; gap: 8px; font-weight: 800; font-size: 16px; }
+.topbar-inner .brand { margin-right: auto; }
 .trip-badge { display: inline-flex; align-items: center; gap: 12px; font-weight: 700; min-width: 0; }
 #tripBadgeTitle { max-width: 46vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -201,7 +202,7 @@ select[multiple] option { padding: 5px 8px; border-radius: 8px; }
 .nav-toggle { display: none; border: none; background: transparent; font-size: 22px; line-height: 1; cursor: pointer; padding: 4px 10px 4px 0; }
 body.in-trip .nav-toggle { display: inline-flex; }
 
-.drawer { position: fixed; top: 0; left: 0; z-index: 80; width: 264px; height: 100vh; display: none; flex-direction: column; background: var(--bg-soft); border-right: 1px solid var(--line); padding: 18px 14px; transform: translateX(-100%); transition: transform .22s ease; }
+.drawer { position: fixed; top: 0; left: 0; z-index: 80; width: 264px; height: 100vh; height: 100dvh; display: none; flex-direction: column; background: var(--bg-soft); border-right: 1px solid var(--line); padding: 18px 14px; padding-bottom: max(18px, env(safe-area-inset-bottom)); overflow-y: auto; transform: translateX(-100%); transition: transform .22s ease; }
 body.in-trip .drawer { display: flex; }
 body.in-trip .drawer.open { transform: translateX(0); box-shadow: var(--shadow); }
 .drawer-head { padding: 4px 8px 14px; border-bottom: 1px solid var(--line); margin-bottom: 12px; }
@@ -213,7 +214,8 @@ body.in-trip .drawer.open { transform: translateX(0); box-shadow: var(--shadow);
 .nav-item.is-active { background: var(--accent); color: #fff; }
 .nav-item.is-disabled { opacity: .4; pointer-events: none; }
 .my-trip.is-current .my-trip-main { border-color: var(--accent); background: var(--accent-soft); }
-.drawer-foot { border-top: 1px solid var(--line); padding-top: 12px; }
+.drawer-foot { border-top: 1px solid var(--line); padding-top: 12px; flex-shrink: 0; }
+.drawer-head { flex-shrink: 0; }
 .drawer-backdrop { position: fixed; inset: 0; z-index: 79; background: rgba(45, 36, 31, .4); display: none; }
 body.in-trip .drawer-backdrop.show { display: block; }
 

@@ -55,16 +55,7 @@
           </label>
           <button class="btn" type="submit">登入</button>
         </form>
-        <p class="status" style="margin-top:12px;">第一次使用？<a href="#" id="showRegister" style="color:var(--accent-dark);font-weight:700;">建立管理員帳號</a></p>
-
-        <form id="registerForm" class="form" hidden style="margin-top:12px;">
-          <h2 class="card-title">建立管理員帳號</h2>
-          <label>Email <input name="email" type="email" autocomplete="email" required /></label>
-          <label>使用者名稱 <input name="username" maxlength="20" placeholder="顯示用" /></label>
-          <label>密碼 <input name="password" type="password" minlength="6" autocomplete="new-password" required /></label>
-          <button class="btn" type="submit">註冊並登入</button>
-          <p class="status"><a href="#" id="showLogin" style="color:var(--accent-dark);font-weight:700;">← 回登入</a></p>
-        </form>
+        <p class="status" style="margin-top:12px;">沒有帳號？請向管理員索取。</p>
         <p id="loginError" class="status" data-ok="false" hidden></p>
       </div>
     </section>
@@ -121,7 +112,6 @@
         <div class="card">
           <div class="card-head">
             <h2 class="card-title">我的行程</h2>
-            <button id="createTripBtn" class="btn btn--sm" type="button" hidden>＋ 建立</button>
           </div>
           <div id="myTripsList" class="my-trips-list"></div>
         </div>

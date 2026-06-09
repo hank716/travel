@@ -1,5 +1,5 @@
 // Phase 1 控制器：路由（加入畫面 ↔ 行程主畫面）、表單、即時成員/幣別。
-import { login, registerAdmin, logout, getSession, getProfile, onAuthChange } from "./auth.js";
+import { login, logout, getSession, getProfile, onAuthChange } from "./auth.js";
 import {
   CURRENCIES, CURRENCY_CODES, currencyLabel, pickColor, fmtMoney, ZERO_DECIMAL,
 } from "./constants.js";
@@ -22,7 +22,7 @@ import {
 } from "./trip.js";
 
 const $ = (s) => document.querySelector(s);
-const { DEFAULT_BASE_CURRENCY, DEFAULT_CURRENCIES, ADMIN_EMAIL } = window.APP_CONFIG;
+const { DEFAULT_BASE_CURRENCY, DEFAULT_CURRENCIES } = window.APP_CONFIG;
 
 let unsub = null;       // 行程/成員 realtime 取消訂閱
 let unsubItin = null;   // 行程項目 realtime 取消訂閱
@@ -258,12 +258,10 @@ function renderOverviewState() {
   $("#tripBadge").hidden = !has;
   if (has) { $("#tripBadgeTitle").textContent = state.trip.title; $("#drawerTripTitle").textContent = state.trip.title; }
   else { $("#drawerTripTitle").textContent = "旅程規劃"; }
-  // 沒選行程時，行程/記帳/天氣分頁不可用
+  // 沒選行程時，行程/記帳/天氣分頁不可用；總覽與管理頁永遠可用
   document.querySelectorAll(".nav-item").forEach((b) => {
-    if (b.dataset.page !== "overview") b.classList.toggle("is-disabled", !has);
+    if (b.dataset.page !== "overview" && b.dataset.page !== "admin") b.classList.toggle("is-disabled", !has);
   });
-  // 僅管理員可建立行程
-  $("#createTripBtn").hidden = !isAdmin();
 }
 
 // 開「新增成員帳號」Modal。withTripSelect=true（管理頁）：顯示行程下拉；否則指派到目前行程。
@@ -433,7 +431,7 @@ function showLogin() {
   document.body.classList.remove("in-trip");
   closeDrawer();
   state.profile = null; state.trip = null;
-  $("#registerForm").hidden = true; $("#loginForm").hidden = false;
+  $("#loginForm").hidden = false;
   loginError("");
   show("loginView");
 }
@@ -444,22 +442,9 @@ async function onLoginSubmit(e) {
   catch (err) { loginError(loginErr(err)); }
   finally { setBusy(f, false); }
 }
-async function onRegisterSubmit(e) {
-  e.preventDefault(); loginError("");
-  const f = e.target;
-  // 寫死：只有管理員 Email 能註冊；其他人請向管理員索取帳號
-  if (f.email.value.trim().toLowerCase() !== String(ADMIN_EMAIL).toLowerCase()) {
-    loginError("僅管理員可註冊，請向管理員索取帳號。");
-    return;
-  }
-  try { setBusy(f, true); await registerAdmin(f.email.value, f.password.value, f.username.value); await onLoggedIn(); }
-  catch (err) { loginError(loginErr(err)); }
-  finally { setBusy(f, false); }
-}
 function applyAccountUI() {
   const p = state.profile;
   $("#drawerAccount").textContent = p ? `${p.username || p.email || "使用者"}${isAdmin() ? "（管理員）" : ""}` : "";
-  $("#createTripBtn").hidden = !isAdmin();
   const adminNav = document.querySelector('.nav-item[data-page="admin"]');
   if (adminNav) adminNav.hidden = !isAdmin();
 }
@@ -1021,18 +1006,18 @@ function renderMyTrips(trips) {
   const list = $("#myTripsList");
   if (!trips || !trips.length) {
     list.innerHTML = isAdmin()
-      ? `<p class="status">還沒有行程。用「＋ 建立」開一趟。</p>`
+      ? `<p class="status">還沒有行程。到「⚙️ 管理」頁建立一趟。</p>`
       : `<p class="status">還沒有被指派任何行程，請聯絡管理員。</p>`;
     return;
   }
   const cur = state.trip?.id;
+  // 純切換器：點一下進入該行程。行程的建立/編輯/刪除集中在「管理」頁。
   list.innerHTML = trips.map((t) => `
     <div class="my-trip ${t.id === cur ? "is-current" : ""}">
       <button class="my-trip-main" type="button" data-enter="${t.id}">
         <span class="my-trip-title">${escapeHtml(t.title)}${t.id === cur ? ' <small class="status">· 使用中</small>' : ""}</span>
         <span class="status">${t.code}${t.start_date ? " · " + t.start_date : ""}</span>
       </button>
-      <button class="btn btn--ghost btn--sm" type="button" data-del="${t.id}" data-title="${escapeAttr(t.title)}">刪除</button>
     </div>`).join("");
   list.querySelectorAll("[data-enter]").forEach((b) =>
     (b.onclick = () => {
@@ -1040,8 +1025,6 @@ function renderMyTrips(trips) {
       saveTrip(t);
       enterTrip(t.id).catch((e) => alert(humanError(e)));
     }));
-  list.querySelectorAll("[data-del]").forEach((b) =>
-    (b.onclick = () => onDeleteTrip(b.dataset.del, b.dataset.title)));
 }
 
 async function onDeleteTrip(id, title) {
@@ -1066,15 +1049,11 @@ async function boot() {
   show("bootView");
   buildJoinView();
 
-  // 登入 / 註冊
+  // 登入
   $("#loginForm").addEventListener("submit", onLoginSubmit);
-  $("#registerForm").addEventListener("submit", onRegisterSubmit);
-  $("#showRegister").onclick = (e) => { e.preventDefault(); $("#loginForm").hidden = true; $("#registerForm").hidden = false; loginError(""); };
-  $("#showLogin").onclick = (e) => { e.preventDefault(); $("#registerForm").hidden = true; $("#loginForm").hidden = false; loginError(""); };
   $("#logoutBtn").onclick = async () => { await logout(); showLogin(); };
 
   // 建立行程 / 新增成員帳號
-  $("#createTripBtn").onclick = () => openTripModal();
   $("#tripModalClose").onclick = closeTripModal;
   $("#tripModal").addEventListener("click", (e) => { if (e.target.id === "tripModal") closeTripModal(); });
   $("#addMemberBtn").onclick = onAddMember;
