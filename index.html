@@ -30,7 +30,8 @@
       <button class="nav-item" data-page="weather" type="button">⛅ 天氣</button>
     </nav>
     <div class="drawer-foot">
-      <button id="switchTrip" class="btn btn--ghost btn--sm" type="button">切換行程</button>
+      <div id="drawerAccount" class="status" style="margin-bottom:8px;"></div>
+      <button id="logoutBtn" class="btn btn--ghost btn--sm" type="button">登出</button>
     </div>
   </aside>
   <div id="drawerBackdrop" class="drawer-backdrop"></div>
@@ -39,35 +40,44 @@
     <!-- 載入中 -->
     <div id="bootView" class="card center-card"><p class="status">載入中…</p></div>
 
-    <!-- 建立 / 加入(登入) 行程 Modal -->
+    <!-- 登入 / 註冊管理員 -->
+    <section id="loginView" class="join-wrap" hidden>
+      <div class="card join-card">
+        <h1 class="join-title">登入</h1>
+        <p class="status">用帳號與密碼登入。</p>
+        <form id="loginForm" class="form">
+          <label>帳號
+            <input name="account" placeholder="Email 或 使用者名稱" autocomplete="username" required />
+          </label>
+          <label>密碼
+            <input name="password" type="password" autocomplete="current-password" required />
+          </label>
+          <button class="btn" type="submit">登入</button>
+        </form>
+        <p class="status" style="margin-top:12px;">第一次使用？<a href="#" id="showRegister" style="color:var(--accent-dark);font-weight:700;">建立管理員帳號</a></p>
+
+        <form id="registerForm" class="form" hidden style="margin-top:12px;">
+          <h2 class="card-title">建立管理員帳號</h2>
+          <label>Email <input name="email" type="email" autocomplete="email" required /></label>
+          <label>使用者名稱 <input name="username" maxlength="20" placeholder="顯示用" /></label>
+          <label>密碼 <input name="password" type="password" minlength="6" autocomplete="new-password" required /></label>
+          <button class="btn" type="submit">註冊並登入</button>
+          <p class="status"><a href="#" id="showLogin" style="color:var(--accent-dark);font-weight:700;">← 回登入</a></p>
+        </form>
+        <p id="loginError" class="status" data-ok="false" hidden></p>
+      </div>
+    </section>
+
+    <!-- 建立新行程 Modal（僅管理員） -->
     <div id="tripModal" class="modal" hidden>
       <div class="modal-box card">
         <div class="card-head">
-          <h2 class="card-title">行程</h2>
+          <h2 class="card-title">建立新行程</h2>
           <button id="tripModalClose" class="btn btn--ghost btn--sm" type="button">✕</button>
         </div>
 
-        <div class="seg" role="tablist">
-          <button class="seg-btn is-active" data-tab="join" type="button">加入 / 登入</button>
-          <button class="seg-btn" data-tab="create" type="button">建立新行程</button>
-        </div>
-
-        <!-- 加入 / 登入 -->
-        <form id="joinForm" class="form" data-pane="join">
-          <label>行程碼
-            <input name="code" placeholder="例如 JP4F2K" autocomplete="off"
-                   style="text-transform:uppercase; letter-spacing:.18em; font-weight:700;" required />
-          </label>
-          <button id="rosterBtn" class="btn btn--ghost btn--sm" type="button">查看名單</button>
-          <div id="rosterPick" class="chip-pick" hidden></div>
-          <label>你的名字
-            <input name="name" placeholder="從名單挑，或輸入新名字" maxlength="20" required />
-          </label>
-          <button class="btn" type="submit">加入 / 登入</button>
-        </form>
-
         <!-- 建立 -->
-        <form id="createForm" class="form" data-pane="create" hidden>
+        <form id="createForm" class="form">
           <label>行程名稱
             <input name="title" placeholder="2026 春 東京大阪" maxlength="40" required />
           </label>
@@ -106,14 +116,11 @@
 
       <!-- 總覽 -->
       <section class="view" id="view-overview">
-        <!-- 行程中樞：我的行程 + 建立 + 加入/登入 -->
+        <!-- 行程中樞：我的行程 + 建立（管理員） -->
         <div class="card">
           <div class="card-head">
             <h2 class="card-title">我的行程</h2>
-            <div style="display:flex; gap:8px;">
-              <button id="joinTripBtn" class="btn btn--ghost btn--sm" type="button">加入 / 登入</button>
-              <button id="createTripBtn" class="btn btn--sm" type="button">＋ 建立</button>
-            </div>
+            <button id="createTripBtn" class="btn btn--sm" type="button" hidden>＋ 建立</button>
           </div>
           <div id="myTripsList" class="my-trips-list"></div>
         </div>
@@ -138,7 +145,7 @@
             <div class="card">
               <div class="card-head">
                 <h2 class="card-title">同行夥伴 <span id="memberCount" class="status"></span></h2>
-                <button id="addMemberBtn" class="btn btn--ghost btn--sm" type="button" hidden>＋ 新增名字</button>
+                <button id="addMemberBtn" class="btn btn--ghost btn--sm" type="button" hidden>＋ 新增成員帳號</button>
               </div>
               <div id="memberList" class="member-list"></div>
             </div>
@@ -168,7 +175,10 @@
         <div class="card">
           <div class="card-head">
             <h2 class="card-title">行程規劃</h2>
-            <button id="addItemBtn" class="btn btn--sm" type="button">＋ 新增項目</button>
+            <div style="display:flex; gap:8px;">
+              <button id="aiItinBtn" class="btn btn--ghost btn--sm" type="button">✨ AI 建議</button>
+              <button id="addItemBtn" class="btn btn--sm" type="button">＋ 新增項目</button>
+            </div>
           </div>
           <div id="dayTabs" class="day-tabs"></div>
           <div id="itineraryList" class="itinerary-list"></div>
@@ -191,6 +201,10 @@
           <div class="card-head">
             <h2 class="card-title">記帳</h2>
             <button id="addExpenseBtn" class="btn btn--sm" type="button">＋ 新增支出</button>
+          </div>
+          <div class="add-currency" style="margin-bottom:14px;">
+            <input id="nlExpenseInput" placeholder="用一句話記帳：拉麵 1200 我跟小明分" />
+            <button id="nlExpenseBtn" class="btn btn--ghost btn--sm" type="button">✨ 解析</button>
           </div>
           <div id="expenseSummary" class="expense-summary"></div>
           <div id="expenseList" class="expense-list"></div>
@@ -323,6 +337,47 @@
           </div>
           <p id="itemError" class="status" data-ok="false" hidden></p>
         </form>
+      </div>
+    </div>
+
+    <!-- 新增成員帳號 Modal（管理員） -->
+    <div id="memberModal" class="modal" hidden>
+      <div class="modal-box card">
+        <div class="card-head">
+          <h2 class="card-title">新增成員帳號</h2>
+          <button id="memberModalClose" class="btn btn--ghost btn--sm" type="button">✕</button>
+        </div>
+        <form id="memberForm" class="form">
+          <label>顯示名稱
+            <input name="display_name" placeholder="小明" maxlength="20" required />
+          </label>
+          <label>登入帳號（使用者名稱）
+            <input name="username" placeholder="ming" autocomplete="off" maxlength="30" required
+                   style="text-transform:lowercase;" />
+          </label>
+          <label>密碼
+            <input name="password" type="text" minlength="6" placeholder="至少 6 碼" required />
+          </label>
+          <small class="status">對方用這組「帳號＋密碼」登入，就能看到並參與這趟行程。同一帳號可被加到多趟。</small>
+          <button class="btn" type="submit">建立帳號並加入這趟</button>
+          <p id="memberError" class="status" data-ok="false" hidden></p>
+        </form>
+      </div>
+    </div>
+
+    <!-- AI 建議行程 Modal -->
+    <div id="aiItinModal" class="modal" hidden>
+      <div class="modal-box card">
+        <div class="card-head">
+          <h2 class="card-title">✨ AI 建議行程</h2>
+          <button id="aiItinClose" class="btn btn--ghost btn--sm" type="button">✕</button>
+        </div>
+        <div class="add-currency" style="margin-bottom:10px;">
+          <input id="aiItinPrefs" placeholder="偏好：美食、文化、親子、購物…（可留空）" />
+          <button id="aiItinGo" class="btn btn--sm" type="button">產生</button>
+        </div>
+        <p class="status">會參考這趟的地區與日期，建議的項目可逐筆加入行程。</p>
+        <div id="aiItinOut" class="itinerary-list" style="margin-top:10px;"></div>
       </div>
     </div>
   </main>

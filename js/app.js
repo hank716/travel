@@ -1,5 +1,5 @@
 // Phase 1 控制器：路由（加入畫面 ↔ 行程主畫面）、表單、即時成員/幣別。
-import { ensureAuth } from "./supabase.js";
+import { login, registerAdmin, logout, getSession, getProfile, onAuthChange } from "./auth.js";
 import {
   CURRENCIES, CURRENCY_CODES, currencyLabel, pickColor, fmtMoney, ZERO_DECIMAL,
 } from "./constants.js";
@@ -15,10 +15,10 @@ import { loadItineraryWeather, loadCityWeather, getWeatherSummaries } from "./we
 import { callAI } from "./ai.js";
 import {
   getSavedTrip, saveTrip, clearSavedTrip,
-  createTrip, joinTrip, getTrip, getMyMember,
+  createTrip, getTrip, getMyMember,
   listMembers, getTripCurrencies, addTripCurrency, removeTripCurrency,
   updateBaseCurrency, subscribeTrip, listMyTrips, deleteTrip,
-  getRoster, addMember, removeMember,
+  provisionMember, removeMember,
 } from "./trip.js";
 
 const $ = (s) => document.querySelector(s);
@@ -31,7 +31,9 @@ let createCurrencies = new Set(); // 建立行程時已選的幣別
 const state = {
   trip: null, me: null, activeDay: null, mapInit: false,
   members: [], currencies: [], splitSel: new Set(), weatherLoaded: false,
+  profile: null, // 登入者 profile（含 is_admin）
 };
+const isAdmin = () => !!state.profile?.is_admin;
 
 // ---------- 分頁路由 + 抽屜 ----------
 const PAGES = ["overview", "itinerary", "expenses", "weather"];
@@ -80,16 +82,11 @@ async function onAiWeather() {
 
 // ---------- 視圖切換 ----------
 function show(view) {
-  for (const id of ["bootView", "appView"]) $("#" + id).hidden = id !== view;
+  for (const id of ["bootView", "loginView", "appView"]) $("#" + id).hidden = id !== view;
 }
 
-// ---------- 行程 Modal（建立 / 加入登入）----------
-function openTripModal(tab = "join") {
-  document.querySelectorAll(".seg-btn").forEach((b) => b.classList.toggle("is-active", b.dataset.tab === tab));
-  $("#joinForm").hidden = tab !== "join";
-  $("#createForm").hidden = tab !== "create";
-  $("#rosterPick").hidden = true;
-  $("#rosterPick").innerHTML = "";
+// ---------- 建立行程 Modal（僅管理員）----------
+function openTripModal() {
   showError("");
   $("#tripModal").hidden = false;
 }
@@ -101,19 +98,8 @@ function showError(msg) {
   el.hidden = !msg;
 }
 
-// ---------- 加入畫面 ----------
+// ---------- 建立行程表單 ----------
 function buildJoinView() {
-  // 分頁切換
-  document.querySelectorAll(".seg-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      document.querySelectorAll(".seg-btn").forEach((b) => b.classList.toggle("is-active", b === btn));
-      const tab = btn.dataset.tab;
-      $("#joinForm").hidden = tab !== "join";
-      $("#createForm").hidden = tab !== "create";
-      showError("");
-    });
-  });
-
   // 基準幣別下拉（全世界）
   const baseSel = $('#createForm select[name="base"]');
   baseSel.innerHTML = CURRENCY_CODES.map(
@@ -129,7 +115,6 @@ function buildJoinView() {
     if (v) { createCurrencies.add(v); renderCreateCurrencyPicker(); }
   };
 
-  $("#joinForm").addEventListener("submit", onJoinSubmit);
   $("#createForm").addEventListener("submit", onCreateSubmit);
 }
 
@@ -157,49 +142,6 @@ function renderCreateCurrencyPicker() {
     ? avail.map((c) => `<option value="${c}">${currencyLabel(c)}</option>`).join("")
     : `<option value="">已全部加入</option>`;
   $("#createAddCurrencyBtn").disabled = !avail.length;
-}
-
-async function onJoinSubmit(e) {
-  e.preventDefault();
-  showError("");
-  const f = e.target;
-  const code = f.code.value.trim().toUpperCase();
-  const name = f.name.value.trim();
-  if (!code || !name) return;
-  try {
-    setBusy(f, true);
-    const trip = await joinTrip({ code, name, color: pickColor() });
-    saveTrip(trip);
-    closeTripModal();
-    await enterTrip(trip.id);
-  } catch (err) {
-    showError(humanError(err));
-  } finally {
-    setBusy(f, false);
-  }
-}
-
-// 查看名單：用行程碼取得成員名字，點一下填入「你的名字」
-async function onRosterLookup() {
-  const code = $("#joinForm").code.value.trim().toUpperCase();
-  const box = $("#rosterPick");
-  if (!code) { showError("請先輸入行程碼。"); return; }
-  showError("");
-  box.hidden = false;
-  box.innerHTML = `<span class="status">查詢中…</span>`;
-  try {
-    const roster = await getRoster(code);
-    if (!roster.length) { box.innerHTML = `<span class="status">查無此行程碼，或名單是空的。</span>`; return; }
-    box.innerHTML = roster.map((m) => `
-      <button type="button" class="chip-toggle ${m.claimed ? "" : "is-on"}" data-roster="${escapeAttr(m.display_name)}">
-        <span class="avatar avatar--sm" style="background:${m.color || "#999"}">${escapeHtml((m.display_name || "?").slice(0, 1))}</span>
-        ${escapeHtml(m.display_name)}${m.is_admin ? " 👑" : ""}${m.claimed ? "" : " <small class='status'>未登入</small>"}
-      </button>`).join("");
-    box.querySelectorAll("[data-roster]").forEach((b) =>
-      (b.onclick = () => { $("#joinForm").name.value = b.dataset.roster; }));
-  } catch (err) {
-    box.innerHTML = `<span class="status" data-ok="false">${humanError(err)}</span>`;
-  }
 }
 
 async function onCreateSubmit(e) {
@@ -318,16 +260,40 @@ function renderOverviewState() {
   document.querySelectorAll(".nav-item").forEach((b) => {
     if (b.dataset.page !== "overview") b.classList.toggle("is-disabled", !has);
   });
+  // 僅管理員可建立行程
+  $("#createTripBtn").hidden = !isAdmin();
 }
 
-// 管理員：新增成員名字
-async function onAddMember() {
-  const name = prompt("新增成員名字（之後對方用行程碼＋這個名字登入）：");
-  if (!name || !name.trim()) return;
+// 管理員：開「新增成員帳號」Modal
+function onAddMember() {
+  const f = $("#memberForm");
+  f.reset();
+  $("#memberError").hidden = true;
+  $("#memberModal").hidden = false;
+}
+
+async function onMemberSubmit(e) {
+  e.preventDefault();
+  const f = e.target;
+  const err = $("#memberError");
+  err.hidden = true;
+  const display_name = f.display_name.value.trim();
+  const username = f.username.value.trim().toLowerCase();
+  const password = f.password.value;
+  if (!display_name || !username || !password) return;
   try {
-    await addMember(state.trip.id, name.trim(), pickColor(state.members.map((m) => m.color)));
+    setBusy(f, true);
+    await provisionMember(state.trip.id, {
+      display_name, username, password,
+      color: pickColor(state.members.map((m) => m.color)),
+    });
+    $("#memberModal").hidden = true;
     await renderTrip(state.trip);
-  } catch (e) { alert(humanError(e)); }
+  } catch (e2) {
+    err.textContent = humanError(e2); err.hidden = false;
+  } finally {
+    setBusy(f, false);
+  }
 }
 
 async function onRemoveMember(id, name) {
@@ -336,6 +302,141 @@ async function onRemoveMember(id, name) {
     await removeMember(id);
     await renderTrip(state.trip);
   } catch (e) { alert(humanError(e)); }
+}
+
+// ---------- 登入 / 註冊 ----------
+function loginError(m) { const el = $("#loginError"); el.textContent = m; el.hidden = !m; }
+function loginErr(err) {
+  const m = err?.message || String(err);
+  if (/Invalid login credentials/i.test(m)) return "帳號或密碼錯誤。";
+  if (/already.*regist/i.test(m)) return "這個 Email 已註冊，請直接登入。";
+  if (/confirm/i.test(m)) return "帳號需 Email 驗證；請到 Supabase 關閉 Confirm email，或收信完成驗證。";
+  if (/Password should be/i.test(m)) return "密碼至少 6 碼。";
+  return m;
+}
+function showLogin() {
+  document.body.classList.remove("in-trip");
+  closeDrawer();
+  state.profile = null; state.trip = null;
+  $("#registerForm").hidden = true; $("#loginForm").hidden = false;
+  loginError("");
+  show("loginView");
+}
+async function onLoginSubmit(e) {
+  e.preventDefault(); loginError("");
+  const f = e.target;
+  try { setBusy(f, true); await login(f.account.value, f.password.value); await onLoggedIn(); }
+  catch (err) { loginError(loginErr(err)); }
+  finally { setBusy(f, false); }
+}
+async function onRegisterSubmit(e) {
+  e.preventDefault(); loginError("");
+  const f = e.target;
+  try { setBusy(f, true); await registerAdmin(f.email.value, f.password.value, f.username.value); await onLoggedIn(); }
+  catch (err) { loginError(loginErr(err)); }
+  finally { setBusy(f, false); }
+}
+function applyAccountUI() {
+  const p = state.profile;
+  $("#drawerAccount").textContent = p ? `${p.username || p.email || "使用者"}${isAdmin() ? "（管理員）" : ""}` : "";
+  $("#createTripBtn").hidden = !isAdmin();
+}
+async function onLoggedIn() {
+  try { state.profile = await getProfile(); } catch { state.profile = null; }
+  const saved = getSavedTrip();
+  if (saved?.id) {
+    try { const me = await getMyMember(saved.id); if (me) { await enterTrip(saved.id); applyAccountUI(); return; } } catch { /* fall through */ }
+  }
+  await showHub();
+  applyAccountUI();
+}
+
+// ---------- AI 建議行程 ----------
+function openAiItin() { $("#aiItinOut").innerHTML = ""; $("#aiItinPrefs").value = ""; $("#aiItinModal").hidden = false; }
+function tripDayRange() {
+  const t = state.trip;
+  if (!t?.start_date) return [];
+  const out = []; const d = new Date(t.start_date + "T00:00:00");
+  const end = new Date((t.end_date || t.start_date) + "T00:00:00");
+  while (d <= end) { out.push(d.toISOString().slice(0, 10)); d.setDate(d.getDate() + 1); }
+  return out;
+}
+async function onAiItinGo() {
+  const out = $("#aiItinOut");
+  out.innerHTML = `<p class="status">AI 規劃中…</p>`;
+  try {
+    const items = await listItems(state.trip.id);
+    let days = tripDayRange();
+    if (!days.length) days = [...new Set(items.map((i) => i.day_date).filter(Boolean))];
+    const area = items.find((i) => i.weather_area)?.weather_area || "";
+    const { items: sug } = await callAI("suggest_itinerary", {
+      trip: { title: state.trip.title, start: state.trip.start_date, end: state.trip.end_date },
+      area, days, existing: items.map((i) => i.title), prefs: $("#aiItinPrefs").value.trim(),
+    });
+    if (!Array.isArray(sug) || !sug.length) { out.innerHTML = `<p class="status">沒有建議，換個偏好再試。</p>`; return; }
+    out.innerHTML = sug.map((s, idx) => `
+      <div class="itin-item">
+        <div class="itin-time">${s.day_date ? s.day_date.slice(5) : "·"}</div>
+        <div class="itin-body">
+          <div class="itin-title">${CATEGORY_ICON[s.category] || "•"} ${escapeHtml(s.title || "")} ${s.category ? `<span class="tag">${escapeHtml(s.category)}</span>` : ""}</div>
+          ${s.location_name ? `<div class="status">📍 ${escapeHtml(s.location_name)}</div>` : ""}
+          ${s.note ? `<div class="itin-notes">${escapeHtml(s.note)}</div>` : ""}
+        </div>
+        <div class="itin-actions"><button class="btn btn--ghost btn--sm" data-add="${idx}">加入</button></div>
+      </div>`).join("");
+    out.querySelectorAll("[data-add]").forEach((b) => (b.onclick = async () => {
+      const s = sug[Number(b.dataset.add)];
+      try {
+        await addItem(state.trip.id, {
+          day_date: s.day_date || null, title: s.title, category: s.category || null,
+          location_name: s.location_name || null, notes: s.note || null,
+        }, state.me?.id);
+        b.textContent = "已加入"; b.disabled = true;
+        renderItinerary(state.trip).catch(() => {});
+      } catch (e) { alert(humanError(e)); }
+    }));
+  } catch (e) {
+    out.innerHTML = `<p class="status" data-ok="false">${humanError(e)}</p>`;
+  }
+}
+
+// ---------- 記帳語意輸入 ----------
+async function onNlExpense() {
+  const text = $("#nlExpenseInput").value.trim();
+  if (!text) return;
+  const btn = $("#nlExpenseBtn"); const old = btn.textContent;
+  btn.disabled = true; btn.textContent = "解析中…";
+  try {
+    const { parsed } = await callAI("parse_expense", {
+      text,
+      members: state.members.map((m) => ({ id: m.id, name: m.display_name })),
+      currencies: state.currencies, base: state.trip.base_currency,
+    });
+    const byName = (n) => {
+      if (!n) return null;
+      if (/^(我|自己|me)$/i.test(String(n).trim())) return state.me;
+      return state.members.find((m) => m.display_name === n
+        || m.display_name.toLowerCase() === String(n).toLowerCase());
+    };
+    openExpenseModal(null);
+    const f = $("#expenseForm");
+    if (parsed.description) f.description.value = parsed.description;
+    if (parsed.amount != null) f.amount.value = parsed.amount;
+    if (parsed.currency && state.currencies.includes(parsed.currency)) $("#expenseCurrency").value = parsed.currency;
+    if (parsed.category) f.category.value = parsed.category;
+    const payer = byName(parsed.paid_by);
+    if (payer) $("#expensePayer").value = payer.id;
+    if (Array.isArray(parsed.splits) && parsed.splits.length) {
+      const ids = parsed.splits.map(byName).filter(Boolean).map((m) => m.id);
+      if (ids.length) { state.splitSel = new Set(ids); renderSplitChips(); }
+    }
+    updateSplitHint();
+    $("#nlExpenseInput").value = "";
+  } catch (e) {
+    alert("AI 解析失敗：" + humanError(e));
+  } finally {
+    btn.disabled = false; btn.textContent = old;
+  }
 }
 
 function renderBaseSelect(trip) {
@@ -790,13 +891,16 @@ async function showHub() {
   let trips = [];
   try { trips = await listMyTrips(); } catch { /* 略過 */ }
   renderMyTrips(trips);
-  if (!trips.length) openTripModal("join"); // 全新使用者直接開 Modal
+  // 管理員若還沒有行程，直接開建立 Modal
+  if (!trips.length && isAdmin()) openTripModal();
 }
 
 function renderMyTrips(trips) {
   const list = $("#myTripsList");
   if (!trips || !trips.length) {
-    list.innerHTML = `<p class="status">還沒有行程。用「＋ 建立」開一趟，或「加入 / 登入」輸入行程碼。</p>`;
+    list.innerHTML = isAdmin()
+      ? `<p class="status">還沒有行程。用「＋ 建立」開一趟。</p>`
+      : `<p class="status">還沒有被指派任何行程，請聯絡管理員。</p>`;
     return;
   }
   const cur = state.trip?.id;
@@ -840,18 +944,31 @@ async function boot() {
   show("bootView");
   buildJoinView();
 
-  // 切換行程：回總覽（我的行程清單就在那裡），不清掉目前行程
-  $("#switchTrip").onclick = () => showPage("overview");
+  // 登入 / 註冊
+  $("#loginForm").addEventListener("submit", onLoginSubmit);
+  $("#registerForm").addEventListener("submit", onRegisterSubmit);
+  $("#showRegister").onclick = (e) => { e.preventDefault(); $("#loginForm").hidden = true; $("#registerForm").hidden = false; loginError(""); };
+  $("#showLogin").onclick = (e) => { e.preventDefault(); $("#registerForm").hidden = true; $("#loginForm").hidden = false; loginError(""); };
+  $("#logoutBtn").onclick = async () => { await logout(); showLogin(); };
 
-  // 行程中樞按鈕
-  $("#createTripBtn").onclick = () => openTripModal("create");
-  $("#joinTripBtn").onclick = () => openTripModal("join");
+  // 建立行程 / 新增成員帳號
+  $("#createTripBtn").onclick = () => openTripModal();
   $("#tripModalClose").onclick = closeTripModal;
-  $("#rosterBtn").onclick = onRosterLookup;
+  $("#tripModal").addEventListener("click", (e) => { if (e.target.id === "tripModal") closeTripModal(); });
   $("#addMemberBtn").onclick = onAddMember;
-  $("#tripModal").addEventListener("click", (e) => {
-    if (e.target.id === "tripModal") closeTripModal();
-  });
+  $("#memberModalClose").onclick = () => ($("#memberModal").hidden = true);
+  $("#memberForm").addEventListener("submit", onMemberSubmit);
+  $("#memberModal").addEventListener("click", (e) => { if (e.target.id === "memberModal") $("#memberModal").hidden = true; });
+
+  // AI 建議行程
+  $("#aiItinBtn").onclick = openAiItin;
+  $("#aiItinClose").onclick = () => ($("#aiItinModal").hidden = true);
+  $("#aiItinGo").onclick = onAiItinGo;
+  $("#aiItinModal").addEventListener("click", (e) => { if (e.target.id === "aiItinModal") $("#aiItinModal").hidden = true; });
+
+  // 記帳語意輸入
+  $("#nlExpenseBtn").onclick = onNlExpense;
+  $("#nlExpenseInput").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); onNlExpense(); } });
 
   $("#copyCode").onclick = async () => {
     await navigator.clipboard.writeText($("#tripCode").textContent);
@@ -898,24 +1015,13 @@ async function boot() {
     if (e.target.id === "expenseModal") closeExpenseModal();
   });
 
-  try {
-    await ensureAuth();
-  } catch (err) {
-    await showHub();
-    openTripModal("join");
-    showError("無法建立身份：" + humanError(err) + "（請確認 Supabase 已開啟匿名登入）");
-    return;
-  }
+  // 登出 / session 失效時回登入頁
+  onAuthChange((session) => { if (!session) showLogin(); });
 
-  // 若本機記得上次行程，且自己仍是成員，直接進入
-  const saved = getSavedTrip();
-  if (saved?.id) {
-    try {
-      const me = await getMyMember(saved.id);
-      if (me) { await enterTrip(saved.id); return; }
-    } catch { /* 落到中樞 */ }
-  }
-  await showHub();
+  // 有 session → 進入；否則登入頁
+  const session = await getSession();
+  if (session) await onLoggedIn();
+  else showLogin();
 }
 
 boot();

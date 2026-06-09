@@ -96,6 +96,48 @@ function districtsPrompt(payload: Record<string, unknown>): string {
   ].join("\n");
 }
 
+// AI 排行程
+function itineraryPrompt(payload: Record<string, unknown>): string {
+  const trip = (payload.trip ?? {}) as { title?: string; start?: string; end?: string };
+  const area = (payload.area as string) || "";
+  const days = (payload.days as string[]) || [];
+  const existing = (payload.existing as string[]) || [];
+  const prefs = (payload.prefs as string) || "";
+  return [
+    `你是專業旅遊行程規劃師。請為「${trip.title ?? "這趟旅行"}」建議行程。`,
+    area ? `主要地區：${area}` : "",
+    days.length ? `要規劃的日期：${days.join("、")}` : (trip.start ? `期間：${trip.start} ~ ${trip.end ?? ""}` : ""),
+    existing.length ? `已排的項目（請勿重複，可與之串接路線）：${existing.join("、")}` : "",
+    prefs ? `偏好：${prefs}` : "",
+    "",
+    "為每一天安排 3~5 個具體景點/餐廳，依地理位置排順路線。",
+    '只輸出 JSON 陣列：[{"day_date":"YYYY-MM-DD","title":"地點名","category":"景點|餐廳|交通|住宿|購物|其他","location_name":"可在Google地圖搜尋的完整地名","note":"一句話建議"}]。',
+    "day_date 用上面的日期；location_name 要含城市，能被地圖搜尋。",
+  ].filter(Boolean).join("\n");
+}
+
+// 記帳語意解析
+function expensePrompt(payload: Record<string, unknown>): string {
+  const text = (payload.text as string) || "";
+  const members = (payload.members as Array<{ id: string; name: string }>) || [];
+  const currencies = (payload.currencies as string[]) || [];
+  const base = (payload.base as string) || "";
+  return [
+    "你是記帳助理，把一句話拆成結構化支出。",
+    `成員清單：${members.map((m) => m.name).join("、") || "（無）"}`,
+    `可用幣別：${currencies.join("、") || base}（基準幣別：${base}）`,
+    `句子：「${text}」`,
+    "",
+    "規則：",
+    "- amount 數字；currency 從可用幣別猜（沒提到就用基準幣別）；",
+    "- category 從 餐飲|交通|住宿|購物|門票|其他 擇一；",
+    "- paid_by 是付款人名字（沒提到就留空字串）；",
+    "- splits 是分攤者名字陣列（『我跟小明分』=我與小明；沒提到就空陣列代表全部均分）；",
+    "- description 簡短說明。",
+    '只輸出 JSON 物件：{"amount":number,"currency":"代碼","category":"類別","description":"說明","paid_by":"名字","splits":["名字"]}。',
+  ].join("\n");
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
@@ -111,7 +153,18 @@ serve(async (req) => {
         try { areas = JSON.parse(raw); } catch { areas = []; }
         return json({ areas });
       }
-      // Phase 5 接續：suggest_itinerary / parse_expense
+      case "suggest_itinerary": {
+        const raw = await gemini(itineraryPrompt(payload), { jsonOut: true });
+        let items: unknown = [];
+        try { items = JSON.parse(raw); } catch { items = []; }
+        return json({ items });
+      }
+      case "parse_expense": {
+        const raw = await gemini(expensePrompt(payload), { jsonOut: true });
+        let parsed: unknown = {};
+        try { parsed = JSON.parse(raw); } catch { parsed = {}; }
+        return json({ parsed });
+      }
       default:
         return json({ error: `不支援的 mode：${mode ?? "(空)"}` }, 400);
     }

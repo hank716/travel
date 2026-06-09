@@ -37,7 +37,20 @@ export async function getRoster(code) {
   return data || [];
 }
 
-// 管理員預建一個成員名字
+// 管理員：建立成員帳號（使用者名稱+密碼）並加入這趟（走 Edge Function，用 service_role）
+export async function provisionMember(tripId, { display_name, username, password, color }) {
+  const { data, error } = await supabase.functions.invoke("admin-users", {
+    body: { action: "create_member", trip_id: tripId, display_name, username, password, color },
+  });
+  if (error) {
+    let detail = error.message || "建立失敗";
+    try { const j = await error.context?.json(); if (j?.error) detail = j.error; } catch { /* ignore */ }
+    throw new Error(detail);
+  }
+  return data;
+}
+
+// 管理員預建一個成員名字（舊：行程碼模式；保留未用）
 export async function addMember(tripId, name, color) {
   const { data, error } = await supabase.rpc("add_member", {
     p_trip_id: tripId, p_name: name, p_color: color,

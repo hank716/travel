@@ -11,6 +11,48 @@
 create extension if not exists pgcrypto;
 
 -- -----------------------------------------------------------------------------
+-- 帳號 profiles（單一管理員制）：第一個註冊者自動成為管理員
+-- -----------------------------------------------------------------------------
+create table if not exists public.profiles (
+  id         uuid primary key references auth.users(id) on delete cascade,
+  username   text unique,
+  is_admin   boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+-- 新使用者註冊 → 建立 profile；若系統尚無管理員，第一位即為管理員
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_is_admin boolean;
+begin
+  select not exists (select 1 from public.profiles p where p.is_admin) into v_is_admin;
+  insert into public.profiles (id, username, is_admin)
+  values (new.id, new.raw_user_meta_data ->> 'username', coalesce(v_is_admin, false))
+  on conflict (id) do nothing;
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute function public.handle_new_user();
+
+-- 目前登入者是否為（全域）管理員
+create or replace function public.is_admin()
+returns boolean
+language sql security definer stable
+set search_path = public
+as $$
+  select coalesce((select p.is_admin from public.profiles p where p.id = auth.uid()), false);
+$$;
+
+-- -----------------------------------------------------------------------------
 -- 資料表
 -- -----------------------------------------------------------------------------
 
@@ -165,6 +207,9 @@ begin
   if auth.uid() is null then
     raise exception 'not authenticated';
   end if;
+  if not public.is_admin() then
+    raise exception 'admin only';
+  end if;
 
   -- 自訂行程碼：正規化 + 驗證 + 查重；留空則自動產生
   if p_code is not null and length(trim(p_code)) > 0 then
@@ -314,6 +359,7 @@ $$;
 -- Row Level Security
 -- -----------------------------------------------------------------------------
 
+alter table public.profiles        enable row level security;
 alter table public.trips           enable row level security;
 alter table public.trip_currencies enable row level security;
 alter table public.members         enable row level security;
@@ -321,6 +367,11 @@ alter table public.itinerary_items enable row level security;
 alter table public.expenses        enable row level security;
 alter table public.expense_splits  enable row level security;
 alter table public.fx_cache        enable row level security;
+
+-- profiles：本人可讀自己；管理員可讀全部（列成員帳號用）。
+drop policy if exists profiles_self on public.profiles;
+create policy profiles_self on public.profiles for select
+  using (id = auth.uid() or public.is_admin());
 
 -- trips：成員可讀、可改設定（base/title 等）；建立走 RPC，不開放直接 INSERT。
 drop policy if exists trips_select on public.trips;
@@ -331,7 +382,7 @@ create policy trips_update on public.trips for update
   using (public.is_trip_member(id)) with check (public.is_trip_member(id));
 drop policy if exists trips_delete on public.trips;
 create policy trips_delete on public.trips for delete
-  using (public.is_trip_member(id));   -- 成員可刪除整趟（cascade 連帶清掉項目/記帳）
+  using (public.is_admin());           -- 僅管理員可刪除整趟（cascade 連帶清掉項目/記帳）
 
 -- trip_currencies：成員可讀寫（讓使用者自由增減幣別）。
 drop policy if exists tc_all on public.trip_currencies;
