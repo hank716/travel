@@ -18,7 +18,7 @@ const { DEFAULT_BASE_CURRENCY, DEFAULT_CURRENCIES } = window.APP_CONFIG;
 let unsub = null;       // 行程/成員 realtime 取消訂閱
 let unsubItin = null;   // 行程項目 realtime 取消訂閱
 let createCurrencies = new Set(); // 建立行程時已選的幣別
-const state = { trip: null, me: null, activeDay: null };
+const state = { trip: null, me: null, activeDay: null, mapInit: false };
 
 // ---------- 視圖切換 ----------
 function show(view) {
@@ -143,6 +143,7 @@ async function enterTrip(tripId) {
   const trip = await getTrip(tripId);
   state.trip = trip;
   state.me = await getMyMember(tripId);
+  state.mapInit = false;   // 進新行程時重設地圖預設
   await renderTrip(trip);
   await renderItinerary(trip);
   show("appView");
@@ -283,6 +284,13 @@ async function renderItinerary(trip) {
 
   // 清單（只顯示目前選的日期；若只有一組則全顯示）
   const showKeys = dayKeys.length > 1 ? [state.activeDay] : dayKeys;
+  // 首次進入時把地圖預設到第一個有地點的項目（讓「開啟 Google Maps」一開始就有效）
+  if (!state.mapInit) {
+    const first = items.find((i) => i.map_query || i.location_name);
+    setMap(first ? (first.map_query || first.location_name) : (trip.title || "Japan"), { silent: true });
+    state.mapInit = true;
+  }
+
   const list = $("#itineraryList");
   if (!items.length) {
     list.innerHTML = `<p class="status">還沒有任何項目，點右上角「＋ 新增項目」開始排行程。</p>`;
@@ -322,12 +330,12 @@ function renderItemCard(it) {
 }
 
 // ---------- 地圖 ----------
-function setMap(query) {
+function setMap(query, { silent = false } = {}) {
   const enc = encodeURIComponent(query);
   $("#mapFrame").src = `https://www.google.com/maps?q=${enc}&output=embed`;
   $("#mapOpen").href = `https://www.google.com/maps/search/?api=1&query=${enc}`;
   $("#mapTitle").textContent = query;
-  $("#mapFrame").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  if (!silent) $("#mapFrame").scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 // ---------- 項目 Modal ----------
