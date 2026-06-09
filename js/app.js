@@ -22,6 +22,9 @@ import {
 } from "./trip.js";
 
 const $ = (s) => document.querySelector(s);
+// 安全寫入：節點不存在就略過（避免快取到舊版 HTML 時整頁崩潰）
+const setText = (sel, v) => { const el = $(sel); if (el) el.textContent = v; };
+const setHidden = (sel, v) => { const el = $(sel); if (el) el.hidden = v; };
 const { DEFAULT_BASE_CURRENCY, DEFAULT_CURRENCIES } = window.APP_CONFIG;
 
 let unsub = null;       // 行程/成員 realtime 取消訂閱
@@ -59,10 +62,8 @@ function closePopovers() {
 
 // 頂部切換器文字 / 顯隱（標題只出現在頂部一處）
 function renderTripSwitcher() {
-  const sw = $("#tripSwitcher");
-  if (!sw) return;
-  sw.hidden = !state.trip;
-  $("#tripSwitcherTitle").textContent = state.trip ? state.trip.title : "";
+  setHidden("#tripSwitcher", !state.trip);
+  setText("#tripSwitcherTitle", state.trip ? state.trip.title : "");
 }
 
 async function openTripMenu() {
@@ -581,10 +582,10 @@ async function onLoginSubmit(e) {
 function applyAccountUI() {
   const p = state.profile;
   const name = p ? (p.username || p.email || "使用者") : "";
-  $("#drawerAccount").textContent = p ? `${name}${isAdmin() ? "（管理員）" : ""}` : "";
+  setText("#drawerAccount", p ? `${name}${isAdmin() ? "（管理員）" : ""}` : "");
   // 頂部帳號鈕（手機登出入口）
-  $("#accountBtn").hidden = !p;
-  $("#accountInitial").textContent = (name || "·").slice(0, 1).toUpperCase();
+  setHidden("#accountBtn", !p);
+  setText("#accountInitial", (name || "·").slice(0, 1).toUpperCase());
   // 管理頁入口（側欄 + 底部列同步）
   document.querySelectorAll('.nav-item[data-page="admin"], .tab-item[data-page="admin"]')
     .forEach((el) => (el.hidden = !isAdmin()));
@@ -1183,8 +1184,9 @@ async function showHub() {
 
 function renderMyTrips(trips) {
   const list = $("#myTripsList");
+  if (!list) return;
   // 頂部已有全域切換器：已在某趟且只有一個行程時，隱藏這張清單卡（避免重複）
-  $("#myTripsCard").hidden = !!state.trip && (trips?.length || 0) <= 1;
+  setHidden("#myTripsCard", !!state.trip && (trips?.length || 0) <= 1);
   if (!trips || !trips.length) {
     list.innerHTML = isAdmin()
       ? `<p class="status">還沒有行程。到「⚙️ 管理」頁建立一趟。</p>`
