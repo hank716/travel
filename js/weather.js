@@ -1,5 +1,7 @@
-// 天氣：依行程地點地理編碼 → Open-Meteo 即時預報（超過範圍改去年同期參考）。
-// 全部免金鑰。移植自 legacy 的天氣邏輯。
+// 天氣：行程地點 →（AI 推斷行政區）→ Open-Meteo 即時預報（超過範圍改去年同期參考）。
+// 解析到的座標寫回 itinerary_items.lat/lng/weather_area 快取，避免重複呼叫 AI。
+import { callAI } from "./ai.js";
+import { updateItem } from "./itinerary.js";
 
 const ICONS = {
   0: { icon: "☀️", label: "晴朗" }, 1: { icon: "🌤️", label: "大致晴朗" },
@@ -84,17 +86,17 @@ async function fetchDay(lat, lon, date) {
   return { source: "climate", refDate: ly, daily: (await r.json()).daily };
 }
 
-// 行程 → 每天代表地點
+// 行程 → 每天代表項目（取每天第一個有地點的項目）
 function deriveDayLocations(items) {
   const byDay = new Map();
   for (const it of items) {
     if (!it.day_date) continue;
-    const q = it.location_name || it.map_query;
-    if (!q) continue;
+    if (!(it.location_name || it.map_query)) continue;
     if (!byDay.has(it.day_date)) {
       byDay.set(it.day_date, {
-        date: it.day_date, query: q,
-        query2: it.map_query && it.map_query !== q ? it.map_query : null,
+        date: it.day_date,
+        item: it,
+        query: it.location_name || it.map_query,
       });
     }
   }
@@ -140,12 +142,50 @@ function toSummary(e) {
   };
 }
 
+// 對沒有座標的日子，一次呼叫 AI 取得各日行政區
+async function resolveAreas(days) {
+  const need = days.filter((d) => !(d.item.lat && d.item.lng));
+  if (!need.length) return {};
+  try {
+    const { areas } = await callAI("resolve_districts", {
+      days: need.map((d) => ({
+        date: d.date, title: d.item.title,
+        location_name: d.item.location_name, map_query: d.item.map_query,
+      })),
+    });
+    const map = {};
+    for (const a of areas || []) if (a && a.date && a.area) map[a.date] = a.area;
+    return map;
+  } catch {
+    return {}; // AI 失敗 → 後面以原始地名回退
+  }
+}
+
 async function resolveEntries(days) {
+  const areaByDate = await resolveAreas(days);
   return Promise.all(days.map(async (dd) => {
     try {
-      const geo = (await geocode(dd.query)) || (dd.query2 ? await geocode(dd.query2) : null);
+      const it = dd.item;
+      let geo = null;
+      let area = null;
+
+      if (it.lat && it.lng) {
+        // 已快取座標，直接用
+        geo = { lat: it.lat, lon: it.lng, name: it.weather_area || it.location_name || dd.query };
+      } else {
+        area = areaByDate[dd.date] || null;
+        geo = (area ? await geocode(area) : null)
+          || await geocode(it.location_name || dd.query)
+          || (it.map_query ? await geocode(it.map_query) : null);
+        // 寫回快取（座標 + 行政區標籤），下次與夥伴都免再呼叫 AI
+        if (geo) {
+          updateItem(it.id, { lat: geo.lat, lng: geo.lon, weather_area: area || geo.name })
+            .catch(() => {});
+        }
+      }
       if (!geo) return { ...dd, error: "找不到地點：" + dd.query };
-      return { ...dd, geo, res: await fetchDay(geo.lat, geo.lon, dd.date) };
+      const label = area || geo.name;
+      return { ...dd, geo: { ...geo, name: label }, res: await fetchDay(geo.lat, geo.lon, dd.date) };
     } catch {
       return { ...dd, error: "天氣讀取失敗" };
     }

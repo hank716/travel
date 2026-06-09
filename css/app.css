@@ -211,6 +211,8 @@ body.in-trip .drawer.open { transform: translateX(0); box-shadow: var(--shadow);
 .nav-item { text-align: left; border: none; background: transparent; color: var(--ink); font-weight: 700; font-size: 15px; padding: 12px 14px; border-radius: var(--radius-sm); cursor: pointer; }
 .nav-item:hover { background: var(--accent-soft); }
 .nav-item.is-active { background: var(--accent); color: #fff; }
+.nav-item.is-disabled { opacity: .4; pointer-events: none; }
+.my-trip.is-current .my-trip-main { border-color: var(--accent); background: var(--accent-soft); }
 .drawer-foot { border-top: 1px solid var(--line); padding-top: 12px; }
 .drawer-backdrop { position: fixed; inset: 0; z-index: 79; background: rgba(45, 36, 31, .4); display: none; }
 body.in-trip .drawer-backdrop.show { display: block; }

@@ -23,12 +23,17 @@ function json(body: unknown, status = 200) {
   });
 }
 
-async function gemini(prompt: string): Promise<string> {
+async function gemini(prompt: string, opts: { jsonOut?: boolean } = {}): Promise<string> {
   const key = Deno.env.get("GEMINI_API_KEY");
   if (!key) throw new Error("尚未設定 GEMINI_API_KEY");
+  const generationConfig: Record<string, unknown> = {
+    temperature: opts.jsonOut ? 0.2 : 0.7,
+    maxOutputTokens: 800,
+  };
+  if (opts.jsonOut) generationConfig.responseMimeType = "application/json";
   const body = JSON.stringify({
     contents: [{ role: "user", parts: [{ text: prompt }] }],
-    generationConfig: { temperature: 0.7, maxOutputTokens: 800 },
+    generationConfig,
   });
 
   let lastErr = "";
@@ -72,6 +77,27 @@ function weatherPrompt(payload: Record<string, unknown>): string {
   ].join("\n");
 }
 
+// 把每天的行程地點解析成「可查天氣的行政區」
+function districtsPrompt(payload: Record<string, unknown>): string {
+  const days = (payload.days ?? []) as Array<Record<string, unknown>>;
+  const lines = days.map((d) =>
+    `- date=${d.date}｜地點：${[d.title, d.location_name, d.map_query].filter(Boolean).join("、")}`
+  ).join("\n");
+  return [
+    "你是地理助理。根據每天的行程地點，判斷它所在的『行政區』，用於查詢天氣。",
+    "規則：",
+    "- 台灣回到「縣市+區」例如「高雄市左營區」「臺南市安平區」；",
+    "- 日本回到「都道府縣+市區町村」例如「東京都台東区」「大阪市中央区」；",
+    "- 其他國家回到「城市」名稱（英文或當地語皆可，例如 Tokyo、Paris）；",
+    "- 只輸出該地點實際所在的行政區，不要加說明。",
+    "",
+    "行程：",
+    lines,
+    "",
+    '只輸出 JSON 陣列，格式：[{"date":"YYYY-MM-DD","area":"行政區"}]，date 必須與輸入相同。',
+  ].join("\n");
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
@@ -81,9 +107,13 @@ serve(async (req) => {
         const text = await gemini(weatherPrompt(payload));
         return json({ text });
       }
-      // Phase 5 接續：
-      // case "suggest_itinerary": ...
-      // case "parse_expense": ...
+      case "resolve_districts": {
+        const raw = await gemini(districtsPrompt(payload), { jsonOut: true });
+        let areas: unknown = [];
+        try { areas = JSON.parse(raw); } catch { areas = []; }
+        return json({ areas });
+      }
+      // Phase 5 接續：suggest_itinerary / parse_expense
       default:
         return json({ error: `不支援的 mode：${mode ?? "(空)"}` }, 400);
     }

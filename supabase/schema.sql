@@ -33,12 +33,20 @@ create table if not exists public.trip_currencies (
 create table if not exists public.members (
   id           uuid primary key default gen_random_uuid(),
   trip_id      uuid not null references public.trips(id) on delete cascade,
-  auth_uid     uuid not null default auth.uid(),      -- 來自匿名登入
+  auth_uid     uuid,                                  -- 來自匿名登入；null = 管理員預建、尚未登入
   display_name text not null,
   color        text not null default '#E66F4B',
+  is_admin     boolean not null default false,        -- 建立者為管理員，可管理名單
   created_at   timestamptz not null default now(),
   unique (trip_id, auth_uid)
 );
+
+-- 既有資料庫的相容性調整（可重複執行）
+alter table public.members alter column auth_uid drop not null;
+alter table public.members alter column auth_uid drop default;
+alter table public.members add column if not exists is_admin boolean not null default false;
+-- 天氣用：快取每個項目解析到的行政區（避免重複呼叫 AI）
+alter table public.itinerary_items add column if not exists weather_area text;
 
 create table if not exists public.itinerary_items (
   id            uuid primary key default gen_random_uuid(),
@@ -181,8 +189,9 @@ begin
     on conflict do nothing;
   end loop;
 
-  insert into public.members (trip_id, auth_uid, display_name, color)
-  values (v_trip.id, auth.uid(), coalesce(nullif(trim(p_name), ''), '我'), coalesce(p_color, '#E66F4B'));
+  -- 建立者即管理員
+  insert into public.members (trip_id, auth_uid, display_name, color, is_admin)
+  values (v_trip.id, auth.uid(), coalesce(nullif(trim(p_name), ''), '我'), coalesce(p_color, '#E66F4B'), true);
 
   return v_trip;
 end;
@@ -244,6 +253,63 @@ begin
 end;
 $$;
 
+-- 目前登入者是否為某行程的管理員
+create or replace function public.is_trip_admin(p_trip_id uuid)
+returns boolean
+language sql security definer stable
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.members m
+    where m.trip_id = p_trip_id and m.auth_uid = auth.uid() and m.is_admin
+  );
+$$;
+
+-- 管理員預建一個成員名字（尚未登入，auth_uid = null）
+create or replace function public.add_member(
+  p_trip_id uuid,
+  p_name    text,
+  p_color   text default '#5E7C58'
+)
+returns public.members
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_member public.members;
+  v_name   text;
+begin
+  if not public.is_trip_admin(p_trip_id) then
+    raise exception 'admin only';
+  end if;
+  v_name := nullif(trim(p_name), '');
+  if v_name is null then raise exception 'name required'; end if;
+  if exists (select 1 from public.members m
+             where m.trip_id = p_trip_id and lower(m.display_name) = lower(v_name)) then
+    raise exception 'name exists';
+  end if;
+  insert into public.members (trip_id, auth_uid, display_name, color, is_admin)
+  values (p_trip_id, null, v_name, coalesce(p_color, '#5E7C58'), false)
+  returning * into v_member;
+  return v_member;
+end;
+$$;
+
+-- 用行程碼取得名單（登入畫面挑名字用；免先成為成員）
+create or replace function public.get_roster(p_code text)
+returns table (display_name text, color text, claimed boolean, is_admin boolean)
+language sql
+security definer
+set search_path = public
+as $$
+  select m.display_name, m.color, (m.auth_uid is not null) as claimed, m.is_admin
+  from public.members m
+  join public.trips t on t.id = m.trip_id
+  where t.code = upper(trim(p_code))
+  order by m.is_admin desc, m.created_at asc;
+$$;
+
 -- -----------------------------------------------------------------------------
 -- Row Level Security
 -- -----------------------------------------------------------------------------
@@ -282,6 +348,13 @@ create policy members_update_own on public.members for update
 drop policy if exists members_delete_own on public.members;
 create policy members_delete_own on public.members for delete
   using (auth_uid = auth.uid());
+-- 管理員可管理（改名/移除）同行程任何成員
+drop policy if exists members_admin_update on public.members;
+create policy members_admin_update on public.members for update
+  using (public.is_trip_admin(trip_id)) with check (public.is_trip_admin(trip_id));
+drop policy if exists members_admin_delete on public.members;
+create policy members_admin_delete on public.members for delete
+  using (public.is_trip_admin(trip_id));
 
 -- itinerary / expenses：成員對該行程完整讀寫。
 drop policy if exists itinerary_all on public.itinerary_items;

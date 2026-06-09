@@ -39,32 +39,31 @@
     <!-- 載入中 -->
     <div id="bootView" class="card center-card"><p class="status">載入中…</p></div>
 
-    <!-- 加入 / 建立行程 -->
-    <section id="joinView" class="join-wrap" hidden>
-      <div class="card join-card">
-        <h1 class="join-title">開始你的旅行</h1>
-        <p class="status">輸入行程碼加入夥伴，或建立一趟新行程。</p>
-
-        <div id="myTrips" class="my-trips" hidden>
-          <h2 class="card-title">我的行程</h2>
-          <div id="myTripsList" class="my-trips-list"></div>
+    <!-- 建立 / 加入(登入) 行程 Modal -->
+    <div id="tripModal" class="modal" hidden>
+      <div class="modal-box card">
+        <div class="card-head">
+          <h2 class="card-title">行程</h2>
+          <button id="tripModalClose" class="btn btn--ghost btn--sm" type="button">✕</button>
         </div>
 
         <div class="seg" role="tablist">
-          <button class="seg-btn is-active" data-tab="join" type="button">加入行程</button>
+          <button class="seg-btn is-active" data-tab="join" type="button">加入 / 登入</button>
           <button class="seg-btn" data-tab="create" type="button">建立新行程</button>
         </div>
 
-        <!-- 加入 -->
+        <!-- 加入 / 登入 -->
         <form id="joinForm" class="form" data-pane="join">
           <label>行程碼
             <input name="code" placeholder="例如 JP4F2K" autocomplete="off"
                    style="text-transform:uppercase; letter-spacing:.18em; font-weight:700;" required />
           </label>
+          <button id="rosterBtn" class="btn btn--ghost btn--sm" type="button">查看名單</button>
+          <div id="rosterPick" class="chip-pick" hidden></div>
           <label>你的名字
-            <input name="name" placeholder="小明" maxlength="20" required />
+            <input name="name" placeholder="從名單挑，或輸入新名字" maxlength="20" required />
           </label>
-          <button class="btn" type="submit">加入</button>
+          <button class="btn" type="submit">加入 / 登入</button>
         </form>
 
         <!-- 建立 -->
@@ -90,9 +89,9 @@
               <select id="createAddCurrency" class="inline-select"></select>
               <button id="createAddCurrencyBtn" class="btn btn--ghost btn--sm" type="button">＋ 加入</button>
             </div>
-            <small class="status">基準幣別會自動納入。</small>
+            <small class="status">基準幣別會自動納入。你就是這趟的管理員。</small>
           </label>
-          <label>你的名字
+          <label>你的名字（管理員）
             <input name="name" placeholder="小明" maxlength="20" required />
           </label>
           <button class="btn" type="submit">建立並進入</button>
@@ -100,44 +99,67 @@
 
         <p id="joinError" class="status" data-ok="false" hidden></p>
       </div>
-    </section>
+    </div>
 
     <!-- 行程主畫面（4 個分頁，由 drawer 切換） -->
     <div id="appView" hidden>
 
       <!-- 總覽 -->
       <section class="view" id="view-overview">
-        <div class="card trip-head">
-          <div class="trip-head-main">
-            <h1 id="tripTitle" style="margin:0 0 4px;"></h1>
-            <p id="tripDates" class="status"></p>
+        <!-- 行程中樞：我的行程 + 建立 + 加入/登入 -->
+        <div class="card">
+          <div class="card-head">
+            <h2 class="card-title">我的行程</h2>
+            <div style="display:flex; gap:8px;">
+              <button id="joinTripBtn" class="btn btn--ghost btn--sm" type="button">加入 / 登入</button>
+              <button id="createTripBtn" class="btn btn--sm" type="button">＋ 建立</button>
+            </div>
           </div>
-          <div class="trip-code-box">
-            <span class="status">行程碼（分享給夥伴）</span>
-            <div class="trip-code-row">
-              <code id="tripCode" class="trip-code"></code>
-              <button id="copyCode" class="btn btn--ghost btn--sm" type="button">複製</button>
+          <div id="myTripsList" class="my-trips-list"></div>
+        </div>
+
+        <!-- 目前行程詳情（沒選行程時隱藏） -->
+        <div id="overviewTripDetail">
+          <div class="card trip-head">
+            <div class="trip-head-main">
+              <h1 id="tripTitle" style="margin:0 0 4px;"></h1>
+              <p id="tripDates" class="status"></p>
+            </div>
+            <div class="trip-code-box">
+              <span class="status">行程碼（分享給夥伴）</span>
+              <div class="trip-code-row">
+                <code id="tripCode" class="trip-code"></code>
+                <button id="copyCode" class="btn btn--ghost btn--sm" type="button">複製</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid-2">
+            <div class="card">
+              <div class="card-head">
+                <h2 class="card-title">同行夥伴 <span id="memberCount" class="status"></span></h2>
+                <button id="addMemberBtn" class="btn btn--ghost btn--sm" type="button" hidden>＋ 新增名字</button>
+              </div>
+              <div id="memberList" class="member-list"></div>
+            </div>
+
+            <div class="card">
+              <h2 class="card-title">幣別設定</h2>
+              <p class="status">基準：
+                <select id="baseSelect" class="inline-select"></select>
+              </p>
+              <div id="currencyPills" class="currency-pills"></div>
+              <div class="add-currency">
+                <select id="addCurrencySelect" class="inline-select"></select>
+                <button id="addCurrencyBtn" class="btn btn--ghost btn--sm" type="button">＋ 加入幣別</button>
+              </div>
             </div>
           </div>
         </div>
 
-        <div class="grid-2">
-          <div class="card">
-            <h2 class="card-title">同行夥伴 <span id="memberCount" class="status"></span></h2>
-            <div id="memberList" class="member-list"></div>
-          </div>
-
-          <div class="card">
-            <h2 class="card-title">幣別設定</h2>
-            <p class="status">基準：
-              <select id="baseSelect" class="inline-select"></select>
-            </p>
-            <div id="currencyPills" class="currency-pills"></div>
-            <div class="add-currency">
-              <select id="addCurrencySelect" class="inline-select"></select>
-              <button id="addCurrencyBtn" class="btn btn--ghost btn--sm" type="button">＋ 加入幣別</button>
-            </div>
-          </div>
+        <!-- 沒選行程時的提示 -->
+        <div id="noTripHint" class="card" hidden>
+          <p class="status">還沒有選擇行程。從上方「我的行程」進入一趟，或用「＋ 建立」「加入 / 登入」開始。</p>
         </div>
       </section>
 

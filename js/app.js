@@ -18,6 +18,7 @@ import {
   createTrip, joinTrip, getTrip, getMyMember,
   listMembers, getTripCurrencies, addTripCurrency, removeTripCurrency,
   updateBaseCurrency, subscribeTrip, listMyTrips, deleteTrip,
+  getRoster, addMember, removeMember,
 } from "./trip.js";
 
 const $ = (s) => document.querySelector(s);
@@ -40,6 +41,7 @@ function closeDrawer() { $("#drawer").classList.remove("open"); $("#drawerBackdr
 
 function showPage(name) {
   if (!PAGES.includes(name)) name = "overview";
+  if (!state.trip && name !== "overview") name = "overview"; // 沒選行程只能看總覽
   PAGES.forEach((p) => ($("#view-" + p).hidden = p !== name));
   document.querySelectorAll(".nav-item").forEach((b) => b.classList.toggle("is-active", b.dataset.page === name));
   if (location.hash.slice(1) !== name) history.replaceState(null, "", "#" + name);
@@ -78,8 +80,20 @@ async function onAiWeather() {
 
 // ---------- 視圖切換 ----------
 function show(view) {
-  for (const id of ["bootView", "joinView", "appView"]) $("#" + id).hidden = id !== view;
+  for (const id of ["bootView", "appView"]) $("#" + id).hidden = id !== view;
 }
+
+// ---------- 行程 Modal（建立 / 加入登入）----------
+function openTripModal(tab = "join") {
+  document.querySelectorAll(".seg-btn").forEach((b) => b.classList.toggle("is-active", b.dataset.tab === tab));
+  $("#joinForm").hidden = tab !== "join";
+  $("#createForm").hidden = tab !== "create";
+  $("#rosterPick").hidden = true;
+  $("#rosterPick").innerHTML = "";
+  showError("");
+  $("#tripModal").hidden = false;
+}
+function closeTripModal() { $("#tripModal").hidden = true; }
 
 function showError(msg) {
   const el = $("#joinError");
@@ -156,11 +170,35 @@ async function onJoinSubmit(e) {
     setBusy(f, true);
     const trip = await joinTrip({ code, name, color: pickColor() });
     saveTrip(trip);
+    closeTripModal();
     await enterTrip(trip.id);
   } catch (err) {
     showError(humanError(err));
   } finally {
     setBusy(f, false);
+  }
+}
+
+// 查看名單：用行程碼取得成員名字，點一下填入「你的名字」
+async function onRosterLookup() {
+  const code = $("#joinForm").code.value.trim().toUpperCase();
+  const box = $("#rosterPick");
+  if (!code) { showError("請先輸入行程碼。"); return; }
+  showError("");
+  box.hidden = false;
+  box.innerHTML = `<span class="status">查詢中…</span>`;
+  try {
+    const roster = await getRoster(code);
+    if (!roster.length) { box.innerHTML = `<span class="status">查無此行程碼，或名單是空的。</span>`; return; }
+    box.innerHTML = roster.map((m) => `
+      <button type="button" class="chip-toggle ${m.claimed ? "" : "is-on"}" data-roster="${escapeAttr(m.display_name)}">
+        <span class="avatar avatar--sm" style="background:${m.color || "#999"}">${escapeHtml((m.display_name || "?").slice(0, 1))}</span>
+        ${escapeHtml(m.display_name)}${m.is_admin ? " 👑" : ""}${m.claimed ? "" : " <small class='status'>未登入</small>"}
+      </button>`).join("");
+    box.querySelectorAll("[data-roster]").forEach((b) =>
+      (b.onclick = () => { $("#joinForm").name.value = b.dataset.roster; }));
+  } catch (err) {
+    box.innerHTML = `<span class="status" data-ok="false">${humanError(err)}</span>`;
   }
 }
 
@@ -184,6 +222,7 @@ async function onCreateSubmit(e) {
       code: f.code.value.trim() || null,
     });
     saveTrip(trip);
+    closeTripModal();
     await enterTrip(trip.id);
   } catch (err) {
     showError(humanError(err));
@@ -215,16 +254,17 @@ async function enterTrip(tripId) {
   $("#tripBadge").hidden = false;
   $("#tripBadgeTitle").textContent = trip.title;
   $("#drawerTripTitle").textContent = trip.title;
+  renderOverviewState();
+  renderMyTrips(await listMyTrips());
   // 進入時依 hash 決定起始頁
   showPage(PAGES.includes(location.hash.slice(1)) ? location.hash.slice(1) : "overview");
 
   // 即時：成員/幣別變動就重畫
   unsub = subscribeTrip(tripId, () => renderTrip(trip).catch(console.error));
-  // 即時：行程項目變動就重畫（並讓天氣下次重新載入）
+  // 即時：行程項目變動就重畫（天氣只標記失效，下次開或按重新整理才重載，避免座標回寫造成連環重載）
   unsubItin = subscribeItinerary(tripId, () => {
     state.weatherLoaded = false;
     renderItinerary(trip).catch(console.error);
-    if (!$("#view-weather").hidden) ensureWeather(true);
   });
   // 即時：記帳變動就重畫
   unsubExp = subscribeExpenses(tripId, () => renderExpenses(trip).catch(console.error));
@@ -243,19 +283,59 @@ async function renderTrip(trip) {
   const me = await getMyMember(trip.id);
   state.members = members;
   state.currencies = currencies;
+  state.me = me;
+  const isAdmin = !!me?.is_admin;
 
-  // 成員
+  // 成員（管理員可移除；未登入者標示）
   $("#memberCount").textContent = `（${members.length} 人）`;
-  $("#memberList").innerHTML = members.map((m) => `
-    <div class="member-chip">
+  $("#addMemberBtn").hidden = !isAdmin;
+  $("#memberList").innerHTML = members.map((m) => {
+    const isMe = me && m.id === me.id;
+    return `<div class="member-chip">
       <span class="avatar" style="background:${m.color}">${(m.display_name || "?").slice(0, 1)}</span>
-      <span>${escapeHtml(m.display_name)}${me && m.id === me.id ? " <small class='status'>(你)</small>" : ""}</span>
-    </div>`).join("");
+      <span>${escapeHtml(m.display_name)}${m.is_admin ? " 👑" : ""}${isMe ? " <small class='status'>(你)</small>" : ""}${m.auth_uid ? "" : " <small class='status'>未登入</small>"}</span>
+      ${isAdmin && !isMe ? `<button class="pill-x" type="button" data-rm-member="${m.id}" data-name="${escapeAttr(m.display_name)}" title="移除">×</button>` : ""}
+    </div>`;
+  }).join("");
+  $("#memberList").querySelectorAll("[data-rm-member]").forEach((b) =>
+    (b.onclick = () => onRemoveMember(b.dataset.rmMember, b.dataset.name)));
 
   // 幣別
   renderBaseSelect(trip);
   renderCurrencyPills(trip, currencies);
   renderAddCurrency(trip, currencies);
+}
+
+// 切換「有/無選定行程」的總覽呈現 + 抽屜分頁可用性
+function renderOverviewState() {
+  const has = !!state.trip;
+  $("#overviewTripDetail").hidden = !has;
+  $("#noTripHint").hidden = has;
+  $("#tripBadge").hidden = !has;
+  if (has) { $("#tripBadgeTitle").textContent = state.trip.title; $("#drawerTripTitle").textContent = state.trip.title; }
+  else { $("#drawerTripTitle").textContent = "旅程規劃"; }
+  // 沒選行程時，行程/記帳/天氣分頁不可用
+  document.querySelectorAll(".nav-item").forEach((b) => {
+    if (b.dataset.page !== "overview") b.classList.toggle("is-disabled", !has);
+  });
+}
+
+// 管理員：新增成員名字
+async function onAddMember() {
+  const name = prompt("新增成員名字（之後對方用行程碼＋這個名字登入）：");
+  if (!name || !name.trim()) return;
+  try {
+    await addMember(state.trip.id, name.trim(), pickColor(state.members.map((m) => m.color)));
+    await renderTrip(state.trip);
+  } catch (e) { alert(humanError(e)); }
+}
+
+async function onRemoveMember(id, name) {
+  if (!confirm(`移除成員「${name}」？\n（若對方已記帳，相關記錄的關聯會被清除）`)) return;
+  try {
+    await removeMember(id);
+    await renderTrip(state.trip);
+  } catch (e) { alert(humanError(e)); }
 }
 
 function renderBaseSelect(trip) {
@@ -699,23 +779,31 @@ function humanError(err) {
   return m;
 }
 
-// ---------- 我的行程（管理/刪除） ----------
-async function showJoin() {
-  document.body.classList.remove("in-trip");
-  closeDrawer();
-  show("joinView");
-  try { renderMyTrips(await listMyTrips()); } catch { /* 略過 */ }
+// ---------- 行程中樞（總覽：我的行程 / 建立 / 加入登入 / 刪除） ----------
+// 沒有選定行程時的著陸：顯示 app 外殼 + 總覽中樞
+async function showHub() {
+  state.trip = null;
+  document.body.classList.add("in-trip"); // 顯示抽屜與中樞外殼
+  show("appView");
+  renderOverviewState();
+  showPage("overview");
+  let trips = [];
+  try { trips = await listMyTrips(); } catch { /* 略過 */ }
+  renderMyTrips(trips);
+  if (!trips.length) openTripModal("join"); // 全新使用者直接開 Modal
 }
 
 function renderMyTrips(trips) {
-  const box = $("#myTrips");
   const list = $("#myTripsList");
-  if (!trips || !trips.length) { box.hidden = true; return; }
-  box.hidden = false;
+  if (!trips || !trips.length) {
+    list.innerHTML = `<p class="status">還沒有行程。用「＋ 建立」開一趟，或「加入 / 登入」輸入行程碼。</p>`;
+    return;
+  }
+  const cur = state.trip?.id;
   list.innerHTML = trips.map((t) => `
-    <div class="my-trip">
+    <div class="my-trip ${t.id === cur ? "is-current" : ""}">
       <button class="my-trip-main" type="button" data-enter="${t.id}">
-        <span class="my-trip-title">${escapeHtml(t.title)}</span>
+        <span class="my-trip-title">${escapeHtml(t.title)}${t.id === cur ? ' <small class="status">· 使用中</small>' : ""}</span>
         <span class="status">${t.code}${t.start_date ? " · " + t.start_date : ""}</span>
       </button>
       <button class="btn btn--ghost btn--sm" type="button" data-del="${t.id}" data-title="${escapeAttr(t.title)}">刪除</button>
@@ -734,7 +822,15 @@ async function onDeleteTrip(id, title) {
   if (!confirm(`確定刪除「${title}」？\n此行程的所有項目與記帳都會一起刪除，無法復原。`)) return;
   try {
     await deleteTrip(id);
+    const wasCurrent = state.trip?.id === id;
     if (getSavedTrip()?.id === id) clearSavedTrip();
+    if (wasCurrent) {
+      if (unsub) { unsub(); unsub = null; }
+      if (unsubItin) { unsubItin(); unsubItin = null; }
+      if (unsubExp) { unsubExp(); unsubExp = null; }
+      state.trip = null;
+      renderOverviewState();
+    }
     renderMyTrips(await listMyTrips());
   } catch (e) { alert(humanError(e)); }
 }
@@ -744,14 +840,19 @@ async function boot() {
   show("bootView");
   buildJoinView();
 
-  $("#switchTrip").onclick = () => {
-    clearSavedTrip();
-    if (unsub) { unsub(); unsub = null; }
-    if (unsubItin) { unsubItin(); unsubItin = null; }
-    if (unsubExp) { unsubExp(); unsubExp = null; }
-    $("#tripBadge").hidden = true;
-    showJoin();
-  };
+  // 切換行程：回總覽（我的行程清單就在那裡），不清掉目前行程
+  $("#switchTrip").onclick = () => showPage("overview");
+
+  // 行程中樞按鈕
+  $("#createTripBtn").onclick = () => openTripModal("create");
+  $("#joinTripBtn").onclick = () => openTripModal("join");
+  $("#tripModalClose").onclick = closeTripModal;
+  $("#rosterBtn").onclick = onRosterLookup;
+  $("#addMemberBtn").onclick = onAddMember;
+  $("#tripModal").addEventListener("click", (e) => {
+    if (e.target.id === "tripModal") closeTripModal();
+  });
+
   $("#copyCode").onclick = async () => {
     await navigator.clipboard.writeText($("#tripCode").textContent);
     $("#copyCode").textContent = "已複製";
@@ -800,7 +901,8 @@ async function boot() {
   try {
     await ensureAuth();
   } catch (err) {
-    show("joinView");
+    await showHub();
+    openTripModal("join");
     showError("無法建立身份：" + humanError(err) + "（請確認 Supabase 已開啟匿名登入）");
     return;
   }
@@ -811,9 +913,9 @@ async function boot() {
     try {
       const me = await getMyMember(saved.id);
       if (me) { await enterTrip(saved.id); return; }
-    } catch { /* 落到加入畫面 */ }
+    } catch { /* 落到中樞 */ }
   }
-  await showJoin();
+  await showHub();
 }
 
 boot();

@@ -30,6 +30,28 @@ export async function createTrip({ title, start, end, base, currencies, name, co
   return data; // trips row
 }
 
+// 用行程碼取得名單（登入挑名字用；免先成為成員）
+export async function getRoster(code) {
+  const { data, error } = await supabase.rpc("get_roster", { p_code: code });
+  if (error) throw error;
+  return data || [];
+}
+
+// 管理員預建一個成員名字
+export async function addMember(tripId, name, color) {
+  const { data, error } = await supabase.rpc("add_member", {
+    p_trip_id: tripId, p_name: name, p_color: color,
+  });
+  if (error) throw error;
+  return data;
+}
+
+// 管理員移除成員
+export async function removeMember(memberId) {
+  const { error } = await supabase.from("members").delete().eq("id", memberId);
+  if (error) throw error;
+}
+
 // 我有參與的所有行程（RLS 只會回我是成員的）
 export async function listMyTrips() {
   const { data, error } = await supabase
