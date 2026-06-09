@@ -116,17 +116,17 @@ language plpgsql
 as $$
 declare
   alphabet text := 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  code text;
+  v_code text;          -- 不可叫 code：會與 trips.code 欄位衝突 → ambiguous
   i int;
 begin
   loop
-    code := '';
+    v_code := '';
     for i in 1..6 loop
-      code := code || substr(alphabet, 1 + floor(random() * length(alphabet))::int, 1);
+      v_code := v_code || substr(alphabet, 1 + floor(random() * length(alphabet))::int, 1);
     end loop;
-    exit when not exists (select 1 from public.trips t where t.code = code);
+    exit when not exists (select 1 from public.trips t where t.code = v_code);
   end loop;
-  return code;
+  return v_code;
 end;
 $$;
 
