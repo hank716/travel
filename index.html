@@ -10,13 +10,30 @@
 <body>
   <header class="topbar">
     <div class="page topbar-inner">
+      <button id="navToggle" class="nav-toggle" type="button" aria-label="選單">☰</button>
       <div class="brand">🧳 <span>旅程規劃</span></div>
       <div id="tripBadge" class="trip-badge" hidden>
         <span id="tripBadgeTitle"></span>
-        <button id="switchTrip" class="btn btn--ghost btn--sm" type="button">切換行程</button>
       </div>
     </div>
   </header>
+
+  <!-- 側邊抽屜導航 -->
+  <aside id="drawer" class="drawer">
+    <div class="drawer-head">
+      <div class="brand">🧳 <span id="drawerTripTitle">旅程規劃</span></div>
+    </div>
+    <nav class="drawer-nav">
+      <button class="nav-item" data-page="overview" type="button">🏠 總覽</button>
+      <button class="nav-item" data-page="itinerary" type="button">🗺️ 行程</button>
+      <button class="nav-item" data-page="expenses" type="button">💰 記帳</button>
+      <button class="nav-item" data-page="weather" type="button">⛅ 天氣</button>
+    </nav>
+    <div class="drawer-foot">
+      <button id="switchTrip" class="btn btn--ghost btn--sm" type="button">切換行程</button>
+    </div>
+  </aside>
+  <div id="drawerBackdrop" class="drawer-backdrop"></div>
 
   <main class="page" style="padding: 28px 0 64px;">
     <!-- 載入中 -->
@@ -85,86 +102,114 @@
       </div>
     </section>
 
-    <!-- 行程主畫面 -->
-    <section id="appView" hidden>
-      <div class="card trip-head">
-        <div class="trip-head-main">
-          <h1 id="tripTitle" style="margin:0 0 4px;"></h1>
-          <p id="tripDates" class="status"></p>
-        </div>
-        <div class="trip-code-box">
-          <span class="status">行程碼（分享給夥伴）</span>
-          <div class="trip-code-row">
-            <code id="tripCode" class="trip-code"></code>
-            <button id="copyCode" class="btn btn--ghost btn--sm" type="button">複製</button>
+    <!-- 行程主畫面（4 個分頁，由 drawer 切換） -->
+    <div id="appView" hidden>
+
+      <!-- 總覽 -->
+      <section class="view" id="view-overview">
+        <div class="card trip-head">
+          <div class="trip-head-main">
+            <h1 id="tripTitle" style="margin:0 0 4px;"></h1>
+            <p id="tripDates" class="status"></p>
+          </div>
+          <div class="trip-code-box">
+            <span class="status">行程碼（分享給夥伴）</span>
+            <div class="trip-code-row">
+              <code id="tripCode" class="trip-code"></code>
+              <button id="copyCode" class="btn btn--ghost btn--sm" type="button">複製</button>
+            </div>
           </div>
         </div>
-      </div>
 
-      <div class="grid-2">
-        <div class="card">
-          <h2 class="card-title">同行夥伴 <span id="memberCount" class="status"></span></h2>
-          <div id="memberList" class="member-list"></div>
-        </div>
+        <div class="grid-2">
+          <div class="card">
+            <h2 class="card-title">同行夥伴 <span id="memberCount" class="status"></span></h2>
+            <div id="memberList" class="member-list"></div>
+          </div>
 
-        <div class="card">
-          <h2 class="card-title">幣別設定</h2>
-          <p class="status">基準：
-            <select id="baseSelect" class="inline-select"></select>
-          </p>
-          <div id="currencyPills" class="currency-pills"></div>
-          <div class="add-currency">
-            <select id="addCurrencySelect" class="inline-select"></select>
-            <button id="addCurrencyBtn" class="btn btn--ghost btn--sm" type="button">＋ 加入幣別</button>
+          <div class="card">
+            <h2 class="card-title">幣別設定</h2>
+            <p class="status">基準：
+              <select id="baseSelect" class="inline-select"></select>
+            </p>
+            <div id="currencyPills" class="currency-pills"></div>
+            <div class="add-currency">
+              <select id="addCurrencySelect" class="inline-select"></select>
+              <button id="addCurrencyBtn" class="btn btn--ghost btn--sm" type="button">＋ 加入幣別</button>
+            </div>
           </div>
         </div>
-      </div>
+      </section>
 
-      <div class="card">
-        <div class="card-head">
-          <h2 class="card-title">行程規劃</h2>
-          <button id="addItemBtn" class="btn btn--sm" type="button">＋ 新增項目</button>
+      <!-- 行程 -->
+      <section class="view" id="view-itinerary" hidden>
+        <div class="card">
+          <div class="card-head">
+            <h2 class="card-title">行程規劃</h2>
+            <button id="addItemBtn" class="btn btn--sm" type="button">＋ 新增項目</button>
+          </div>
+          <div id="dayTabs" class="day-tabs"></div>
+          <div id="itineraryList" class="itinerary-list"></div>
         </div>
-        <div id="dayTabs" class="day-tabs"></div>
-        <div id="itineraryList" class="itinerary-list"></div>
-      </div>
 
-      <div class="card">
-        <div class="card-head">
-          <h2 class="card-title">地圖</h2>
-          <a id="mapOpen" class="btn btn--ghost btn--sm" target="_blank" rel="noopener"
-             href="https://www.google.com/maps">在 Google Maps 開啟行程</a>
+        <div class="card">
+          <div class="card-head">
+            <h2 class="card-title">地圖</h2>
+            <a id="mapOpen" class="btn btn--ghost btn--sm" target="_blank" rel="noopener"
+               href="https://www.google.com/maps">在 Google Maps 開啟行程</a>
+          </div>
+          <div id="mapTitle" class="status" style="margin-bottom:8px;">點行程項目的「地圖」即可在此顯示</div>
+          <iframe id="mapFrame" class="map-frame" loading="lazy" referrerpolicy="no-referrer-when-downgrade" hidden></iframe>
         </div>
-        <div id="mapTitle" class="status" style="margin-bottom:8px;">點行程項目的「地圖」即可在此顯示</div>
-        <iframe id="mapFrame" class="map-frame" loading="lazy" referrerpolicy="no-referrer-when-downgrade" hidden></iframe>
-      </div>
+      </section>
 
-      <div class="card">
-        <div class="card-head">
-          <h2 class="card-title">記帳</h2>
-          <button id="addExpenseBtn" class="btn btn--sm" type="button">＋ 新增支出</button>
+      <!-- 記帳 -->
+      <section class="view" id="view-expenses" hidden>
+        <div class="card">
+          <div class="card-head">
+            <h2 class="card-title">記帳</h2>
+            <button id="addExpenseBtn" class="btn btn--sm" type="button">＋ 新增支出</button>
+          </div>
+          <div id="expenseSummary" class="expense-summary"></div>
+          <div id="expenseList" class="expense-list"></div>
         </div>
-        <div id="expenseSummary" class="expense-summary"></div>
-        <div id="expenseList" class="expense-list"></div>
-      </div>
 
-      <div class="card">
-        <h2 class="card-title">結算</h2>
-        <p class="status">全部換算成基準幣別後計算。</p>
-        <div id="balanceList" class="balance-list"></div>
-        <h3 class="day-head" style="margin-top:16px;">建議轉帳</h3>
-        <div id="settleList" class="settle-list"></div>
-      </div>
+        <div class="card">
+          <h2 class="card-title">結算</h2>
+          <p class="status">全部換算成基準幣別後計算。</p>
+          <div id="balanceList" class="balance-list"></div>
+          <h3 class="day-head" style="margin-top:16px;">建議轉帳</h3>
+          <div id="settleList" class="settle-list"></div>
+        </div>
+      </section>
 
-      <div class="feature-tabs" style="margin-top:6px;">
-        <span class="feature-tab is-done">加入行程 ✓</span>
-        <span class="feature-tab is-done">行程規劃 ✓</span>
-        <span class="feature-tab is-done">即時匯率 ✓</span>
-        <span class="feature-tab is-done">多幣別記帳/結算 ✓</span>
-        <span class="feature-tab is-todo">天氣 · Phase 4</span>
-        <span class="feature-tab is-todo">AI 助手 · Phase 5</span>
-      </div>
-    </section>
+      <!-- 天氣 -->
+      <section class="view" id="view-weather" hidden>
+        <div class="card">
+          <div class="card-head">
+            <h2 class="card-title">天氣</h2>
+            <button id="refreshWeather" class="btn btn--ghost btn--sm" type="button">重新整理</button>
+          </div>
+          <p id="weatherSubtitle" class="status">依行程地點即時取得 Open-Meteo 預報。</p>
+          <div class="add-currency" style="margin:10px 0;">
+            <input id="weatherManualInput" placeholder="或手動查城市，如 Tokyo / 京都" />
+            <button id="weatherManualBtn" class="btn btn--ghost btn--sm" type="button">查詢</button>
+          </div>
+          <div id="forecastGrid" class="forecast-grid"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h2 class="card-title">✨ AI 天氣建議</h2>
+            <button id="aiWeatherBtn" class="btn btn--sm" type="button">產生建議</button>
+          </div>
+          <div id="aiWeatherOut" class="ai-out">
+            <p class="status">按「產生建議」讓 AI 依各日天氣給穿搭與行程提醒（雨天改室內等）。</p>
+          </div>
+        </div>
+      </section>
+
+    </div>
 
     <!-- 新增/編輯支出 Modal -->
     <div id="expenseModal" class="modal" hidden>

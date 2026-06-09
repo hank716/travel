@@ -10,7 +10,10 @@
 - ✅ **全世界幣別 + 即時匯率**：ISO 4217 完整下拉、open.er-api 即時匯率、每日快取
 - ✅ **Phase 2** 行程規劃：項目 CRUD、依日期分頁、Google Maps 路線帶入、即時同步
 - ✅ **Phase 3** 多幣別記帳：支出/分帳、即時匯率快照、各幣別小計、結算（每人餘額 + 最少轉帳）
-- ⬜ Phase 4 天氣 ｜ Phase 5 AI ｜ Phase 6 收尾
+- ✅ **多頁面改版**：側邊抽屜導航，拆成 總覽 / 行程 / 記帳 / 天氣 四頁（hash 路由、RWD 桌機常駐側欄）
+- ✅ **Phase 4** 天氣：依行程地點自動地理編碼 → Open-Meteo 逐日預報（超範圍顯示去年同期參考）
+- 🔶 **Phase 5（部分）** AI 天氣建議：Gemini Edge Function `weather_suggest`（需部署 + 設金鑰才會動）
+- ⬜ Phase 5 其餘（AI 排行程 / 記帳語意輸入） ｜ Phase 6 收尾
 
 ## 結構
 ```

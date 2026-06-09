@@ -11,6 +11,8 @@ import {
   listExpenses, addExpense, updateExpense, deleteExpense, subscribeExpenses,
 } from "./expenses.js";
 import { computeBalances, currencyTotals, settleUp, splitEqually } from "./settle.js";
+import { loadItineraryWeather, loadCityWeather, getWeatherSummaries } from "./weather.js";
+import { callAI } from "./ai.js";
 import {
   getSavedTrip, saveTrip, clearSavedTrip,
   createTrip, joinTrip, getTrip, getMyMember,
@@ -27,8 +29,52 @@ let unsubExp = null;    // 記帳 realtime 取消訂閱
 let createCurrencies = new Set(); // 建立行程時已選的幣別
 const state = {
   trip: null, me: null, activeDay: null, mapInit: false,
-  members: [], currencies: [], splitSel: new Set(),
+  members: [], currencies: [], splitSel: new Set(), weatherLoaded: false,
 };
+
+// ---------- 分頁路由 + 抽屜 ----------
+const PAGES = ["overview", "itinerary", "expenses", "weather"];
+
+function openDrawer() { $("#drawer").classList.add("open"); $("#drawerBackdrop").classList.add("show"); }
+function closeDrawer() { $("#drawer").classList.remove("open"); $("#drawerBackdrop").classList.remove("show"); }
+
+function showPage(name) {
+  if (!PAGES.includes(name)) name = "overview";
+  PAGES.forEach((p) => ($("#view-" + p).hidden = p !== name));
+  document.querySelectorAll(".nav-item").forEach((b) => b.classList.toggle("is-active", b.dataset.page === name));
+  if (location.hash.slice(1) !== name) history.replaceState(null, "", "#" + name);
+  closeDrawer();
+  if (name === "weather") ensureWeather();
+}
+
+async function ensureWeather(force = false) {
+  if (state.weatherLoaded && !force) return;
+  state.weatherLoaded = true;
+  try {
+    const items = await listItems(state.trip.id);
+    await loadItineraryWeather(items);
+  } catch (e) {
+    $("#forecastGrid").innerHTML = `<p class="status" data-ok="false">${humanError(e)}</p>`;
+  }
+}
+
+async function onAiWeather() {
+  const out = $("#aiWeatherOut");
+  let days = getWeatherSummaries();
+  if (!days.length) { await ensureWeather(true); days = getWeatherSummaries(); }
+  if (!days.length) {
+    out.innerHTML = `<p class="status">目前沒有可用天氣資料，請先在行程加入地點或手動查城市。</p>`;
+    return;
+  }
+  out.classList.add("loading"); out.textContent = "AI 思考中…";
+  try {
+    const { text } = await callAI("weather_suggest", { trip: { title: state.trip.title }, days });
+    out.classList.remove("loading"); out.textContent = text || "（沒有回應）";
+  } catch (e) {
+    out.classList.remove("loading");
+    out.innerHTML = `<p class="status" data-ok="false">AI 失敗：${humanError(e)}</p>`;
+  }
+}
 
 // ---------- 視圖切換 ----------
 function show(view) {
@@ -158,19 +204,28 @@ async function enterTrip(tripId) {
   const frame = $("#mapFrame");
   frame.hidden = true; frame.removeAttribute("src");
   $("#mapTitle").textContent = "點行程項目的「地圖」即可在此顯示";
+  state.weatherLoaded = false;
   await renderTrip(trip);
   await renderItinerary(trip);
   await renderExpenses(trip);
-  show("appView");
 
-  // 頂部徽章
+  document.body.classList.add("in-trip");
+  show("appView");
+  // 頂部徽章 + 抽屜標題
   $("#tripBadge").hidden = false;
   $("#tripBadgeTitle").textContent = trip.title;
+  $("#drawerTripTitle").textContent = trip.title;
+  // 進入時依 hash 決定起始頁
+  showPage(PAGES.includes(location.hash.slice(1)) ? location.hash.slice(1) : "overview");
 
   // 即時：成員/幣別變動就重畫
   unsub = subscribeTrip(tripId, () => renderTrip(trip).catch(console.error));
-  // 即時：行程項目變動就重畫
-  unsubItin = subscribeItinerary(tripId, () => renderItinerary(trip).catch(console.error));
+  // 即時：行程項目變動就重畫（並讓天氣下次重新載入）
+  unsubItin = subscribeItinerary(tripId, () => {
+    state.weatherLoaded = false;
+    renderItinerary(trip).catch(console.error);
+    if (!$("#view-weather").hidden) ensureWeather(true);
+  });
   // 即時：記帳變動就重畫
   unsubExp = subscribeExpenses(tripId, () => renderExpenses(trip).catch(console.error));
 }
@@ -646,6 +701,8 @@ function humanError(err) {
 
 // ---------- 我的行程（管理/刪除） ----------
 async function showJoin() {
+  document.body.classList.remove("in-trip");
+  closeDrawer();
   show("joinView");
   try { renderMyTrips(await listMyTrips()); } catch { /* 略過 */ }
 }
@@ -709,6 +766,25 @@ async function boot() {
   $("#itemModal").addEventListener("click", (e) => {
     if (e.target.id === "itemModal") closeItemModal(); // 點背景關閉
   });
+
+  // 抽屜 + 分頁路由
+  $("#navToggle").onclick = openDrawer;
+  $("#drawerBackdrop").onclick = closeDrawer;
+  document.querySelectorAll(".nav-item").forEach((b) => (b.onclick = () => showPage(b.dataset.page)));
+  window.addEventListener("hashchange", () => {
+    if (!$("#appView").hidden) showPage(location.hash.slice(1) || "overview");
+  });
+
+  // 天氣
+  $("#refreshWeather").onclick = () => ensureWeather(true);
+  $("#weatherManualBtn").onclick = () => {
+    const q = $("#weatherManualInput").value.trim();
+    if (q) loadCityWeather(q).catch((e) => alert(humanError(e)));
+  };
+  $("#weatherManualInput").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); $("#weatherManualBtn").click(); }
+  });
+  $("#aiWeatherBtn").onclick = onAiWeather;
 
   // 支出 modal
   $("#addExpenseBtn").onclick = () => openExpenseModal(null);
