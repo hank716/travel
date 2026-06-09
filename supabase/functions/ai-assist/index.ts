@@ -23,14 +23,18 @@ function json(body: unknown, status = 200) {
   });
 }
 
-async function gemini(prompt: string, opts: { jsonOut?: boolean } = {}): Promise<string> {
+async function gemini(prompt: string, opts: { jsonOut?: boolean; maxTokens?: number } = {}): Promise<string> {
   const key = Deno.env.get("GEMINI_API_KEY");
   if (!key) throw new Error("尚未設定 GEMINI_API_KEY");
   const generationConfig: Record<string, unknown> = {
     temperature: opts.jsonOut ? 0.2 : 0.7,
-    maxOutputTokens: 800,
+    maxOutputTokens: opts.maxTokens ?? 800,
   };
-  if (opts.jsonOut) generationConfig.responseMimeType = "application/json";
+  if (opts.jsonOut) {
+    generationConfig.responseMimeType = "application/json";
+    // 2.5-flash 是 thinking 模型，會吃掉輸出額度導致結構化結果為空 → 結構化模式關閉思考
+    generationConfig.thinkingConfig = { thinkingBudget: 0 };
+  }
   const body = JSON.stringify({
     contents: [{ role: "user", parts: [{ text: prompt }] }],
     generationConfig,
@@ -154,9 +158,14 @@ serve(async (req) => {
         return json({ areas });
       }
       case "suggest_itinerary": {
-        const raw = await gemini(itineraryPrompt(payload), { jsonOut: true });
-        let items: unknown = [];
-        try { items = JSON.parse(raw); } catch { items = []; }
+        const raw = await gemini(itineraryPrompt(payload), { jsonOut: true, maxTokens: 2048 });
+        let parsed: unknown = [];
+        try { parsed = JSON.parse(raw); } catch { parsed = []; }
+        // 容錯：可能回成物件包陣列
+        let items: unknown[] = Array.isArray(parsed) ? parsed
+          : (Array.isArray((parsed as Record<string, unknown>)?.items) ? (parsed as { items: unknown[] }).items
+          : Array.isArray((parsed as Record<string, unknown>)?.itinerary) ? (parsed as { itinerary: unknown[] }).itinerary
+          : []);
         return json({ items });
       }
       case "parse_expense": {
