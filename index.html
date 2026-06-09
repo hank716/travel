@@ -28,6 +28,11 @@
         <h1 class="join-title">開始你的旅行</h1>
         <p class="status">輸入行程碼加入夥伴，或建立一趟新行程。</p>
 
+        <div id="myTrips" class="my-trips" hidden>
+          <h2 class="card-title">我的行程</h2>
+          <div id="myTripsList" class="my-trips-list"></div>
+        </div>
+
         <div class="seg" role="tablist">
           <button class="seg-btn is-active" data-tab="join" type="button">加入行程</button>
           <button class="seg-btn" data-tab="create" type="button">建立新行程</button>
@@ -49,6 +54,11 @@
         <form id="createForm" class="form" data-pane="create" hidden>
           <label>行程名稱
             <input name="title" placeholder="2026 春 東京大阪" maxlength="40" required />
+          </label>
+          <label>自訂行程碼（選填，留空自動產生）
+            <input name="code" placeholder="例如 JAPAN26" maxlength="12" autocomplete="off"
+                   style="text-transform:uppercase; letter-spacing:.12em;" />
+            <small class="status">3–12 碼英文或數字。</small>
           </label>
           <div class="row">
             <label>出發日 <input name="start" type="date" /></label>

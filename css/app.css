@@ -92,6 +92,13 @@ input, select, textarea {
 .join-card { width: min(520px, 100%); }
 .join-title { margin: 0 0 4px; }
 
+.my-trips { margin: 16px 0; }
+.my-trips-list { display: flex; flex-direction: column; gap: 8px; }
+.my-trip { display: flex; gap: 8px; align-items: stretch; }
+.my-trip-main { flex: 1; min-width: 0; text-align: left; cursor: pointer; background: var(--bg-soft); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px 14px; display: flex; flex-direction: column; gap: 2px; }
+.my-trip-main:hover { border-color: var(--accent); }
+.my-trip-title { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 .seg { display: flex; gap: 6px; background: var(--accent-soft); padding: 5px; border-radius: var(--radius-sm); margin: 18px 0; }
 .seg-btn { flex: 1; border: none; background: transparent; color: var(--accent-dark); font-weight: 700; padding: 9px; border-radius: 10px; cursor: pointer; }
 .seg-btn.is-active { background: #fff; box-shadow: var(--shadow-sm); }

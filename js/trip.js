@@ -14,8 +14,8 @@ export function clearSavedTrip() {
   localStorage.removeItem(LS_KEY);
 }
 
-// 建立新行程（建立者自動成為第一個成員）
-export async function createTrip({ title, start, end, base, currencies, name, color }) {
+// 建立新行程（建立者自動成為第一個成員）。code 留空則自動產生。
+export async function createTrip({ title, start, end, base, currencies, name, color, code }) {
   const { data, error } = await supabase.rpc("create_trip", {
     p_title: title,
     p_start: start || null,
@@ -24,9 +24,24 @@ export async function createTrip({ title, start, end, base, currencies, name, co
     p_currencies: currencies,
     p_name: name,
     p_color: color,
+    p_code: code || null,
   });
   if (error) throw error;
   return data; // trips row
+}
+
+// 我有參與的所有行程（RLS 只會回我是成員的）
+export async function listMyTrips() {
+  const { data, error } = await supabase
+    .from("trips").select("*").order("created_at", { ascending: false });
+  if (error) throw error;
+  return data;
+}
+
+// 刪除整趟行程（cascade 連帶刪除成員/項目/記帳）
+export async function deleteTrip(id) {
+  const { error } = await supabase.from("trips").delete().eq("id", id);
+  if (error) throw error;
 }
 
 // 以行程碼加入；已是成員則更新名字/顏色

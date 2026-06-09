@@ -130,7 +130,10 @@ begin
 end;
 $$;
 
--- 建立新行程 + 把建立者加為第一個成員。回傳該 trip。
+-- 建立新行程 + 把建立者加為第一個成員。可帶自訂行程碼 p_code（留空自動產生）。
+-- 注意：新增了 p_code 參數 → 是新的函式簽章，需先 drop 舊版避免重載衝突。
+drop function if exists public.create_trip(text, date, date, text, text[], text, text);
+
 create or replace function public.create_trip(
   p_title      text,
   p_start      date,
@@ -138,7 +141,8 @@ create or replace function public.create_trip(
   p_base       text,
   p_currencies text[],
   p_name       text,
-  p_color      text default '#E66F4B'
+  p_color      text default '#E66F4B',
+  p_code       text default null
 )
 returns public.trips
 language plpgsql
@@ -147,14 +151,28 @@ set search_path = public
 as $$
 declare
   v_trip public.trips;
+  v_code text;
   c text;
 begin
   if auth.uid() is null then
     raise exception 'not authenticated';
   end if;
 
+  -- 自訂行程碼：正規化 + 驗證 + 查重；留空則自動產生
+  if p_code is not null and length(trim(p_code)) > 0 then
+    v_code := upper(regexp_replace(trim(p_code), '\s', '', 'g'));
+    if v_code !~ '^[A-Z0-9]{3,12}$' then
+      raise exception 'invalid code';
+    end if;
+    if exists (select 1 from public.trips t where t.code = v_code) then
+      raise exception 'code taken';
+    end if;
+  else
+    v_code := public.gen_trip_code();
+  end if;
+
   insert into public.trips (code, title, start_date, end_date, base_currency)
-  values (gen_trip_code(), coalesce(p_title, '未命名行程'), p_start, p_end, coalesce(p_base, 'TWD'))
+  values (v_code, coalesce(p_title, '未命名行程'), p_start, p_end, coalesce(p_base, 'TWD'))
   returning * into v_trip;
 
   foreach c in array coalesce(p_currencies, array['TWD'])
@@ -164,13 +182,14 @@ begin
   end loop;
 
   insert into public.members (trip_id, auth_uid, display_name, color)
-  values (v_trip.id, auth.uid(), coalesce(p_name, '我'), coalesce(p_color, '#E66F4B'));
+  values (v_trip.id, auth.uid(), coalesce(nullif(trim(p_name), ''), '我'), coalesce(p_color, '#E66F4B'));
 
   return v_trip;
 end;
 $$;
 
--- 以行程碼加入；若已是成員則更新名字/顏色。回傳該 trip。
+-- 以行程碼加入。名字即身份：若該行程已有同名成員，就把此名字「認領」到目前裝置
+-- （不再新增重複的人）；否則沿用目前裝置在本行程的身份改名，或新增成員。回傳該 trip。
 create or replace function public.join_trip(
   p_code  text,
   p_name  text,
@@ -182,10 +201,17 @@ security definer
 set search_path = public
 as $$
 declare
-  v_trip public.trips;
+  v_trip     public.trips;
+  v_existing public.members;
+  v_name     text;
 begin
   if auth.uid() is null then
     raise exception 'not authenticated';
+  end if;
+
+  v_name := nullif(trim(p_name), '');
+  if v_name is null then
+    raise exception 'name required';
   end if;
 
   select * into v_trip from public.trips where code = upper(trim(p_code));
@@ -193,10 +219,26 @@ begin
     raise exception 'trip code not found';
   end if;
 
-  insert into public.members (trip_id, auth_uid, display_name, color)
-  values (v_trip.id, auth.uid(), coalesce(p_name, '訪客'), coalesce(p_color, '#5E7C58'))
-  on conflict (trip_id, auth_uid)
-  do update set display_name = excluded.display_name, color = excluded.color;
+  select * into v_existing from public.members
+   where trip_id = v_trip.id and lower(display_name) = lower(v_name)
+   limit 1;
+
+  if found then
+    -- 認領既有同名成員：先移除目前裝置在本行程的其他身份，避免重複
+    delete from public.members
+     where trip_id = v_trip.id and auth_uid = auth.uid() and id <> v_existing.id;
+    update public.members
+       set auth_uid = auth.uid(), color = coalesce(p_color, color)
+     where id = v_existing.id;
+  elsif exists (select 1 from public.members where trip_id = v_trip.id and auth_uid = auth.uid()) then
+    -- 目前裝置已在本行程：改名
+    update public.members
+       set display_name = v_name, color = coalesce(p_color, color)
+     where trip_id = v_trip.id and auth_uid = auth.uid();
+  else
+    insert into public.members (trip_id, auth_uid, display_name, color)
+    values (v_trip.id, auth.uid(), v_name, coalesce(p_color, '#5E7C58'));
+  end if;
 
   return v_trip;
 end;
@@ -221,6 +263,9 @@ create policy trips_select on public.trips for select
 drop policy if exists trips_update on public.trips;
 create policy trips_update on public.trips for update
   using (public.is_trip_member(id)) with check (public.is_trip_member(id));
+drop policy if exists trips_delete on public.trips;
+create policy trips_delete on public.trips for delete
+  using (public.is_trip_member(id));   -- 成員可刪除整趟（cascade 連帶清掉項目/記帳）
 
 -- trip_currencies：成員可讀寫（讓使用者自由增減幣別）。
 drop policy if exists tc_all on public.trip_currencies;

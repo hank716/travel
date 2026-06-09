@@ -9,7 +9,7 @@ import {
   getSavedTrip, saveTrip, clearSavedTrip,
   createTrip, joinTrip, getTrip, getMyMember,
   listMembers, getTripCurrencies, addTripCurrency, removeTripCurrency,
-  updateBaseCurrency, subscribeTrip,
+  updateBaseCurrency, subscribeTrip, listMyTrips, deleteTrip,
 } from "./trip.js";
 
 const $ = (s) => document.querySelector(s);
@@ -125,6 +125,7 @@ async function onCreateSubmit(e) {
       currencies,
       name: f.name.value.trim(),
       color: pickColor(),
+      code: f.code.value.trim() || null,
     });
     saveTrip(trip);
     await enterTrip(trip.id);
@@ -404,9 +405,50 @@ function escapeHtml(s) {
 function escapeAttr(s) { return escapeHtml(s); }
 function humanError(err) {
   const m = err?.message || String(err);
+  if (/code taken/i.test(m)) return "這個行程碼已被使用，換一個吧。";
+  if (/invalid code/i.test(m)) return "行程碼只能用英文或數字，長度 3–12 碼。";
+  if (/name required/i.test(m)) return "請輸入你的名字。";
   if (/not found/i.test(m)) return "找不到這個行程碼，請確認後再試。";
   if (/not authenticated/i.test(m)) return "身份尚未就緒，請重新整理頁面。";
   return m;
+}
+
+// ---------- 我的行程（管理/刪除） ----------
+async function showJoin() {
+  show("joinView");
+  try { renderMyTrips(await listMyTrips()); } catch { /* 略過 */ }
+}
+
+function renderMyTrips(trips) {
+  const box = $("#myTrips");
+  const list = $("#myTripsList");
+  if (!trips || !trips.length) { box.hidden = true; return; }
+  box.hidden = false;
+  list.innerHTML = trips.map((t) => `
+    <div class="my-trip">
+      <button class="my-trip-main" type="button" data-enter="${t.id}">
+        <span class="my-trip-title">${escapeHtml(t.title)}</span>
+        <span class="status">${t.code}${t.start_date ? " · " + t.start_date : ""}</span>
+      </button>
+      <button class="btn btn--ghost btn--sm" type="button" data-del="${t.id}" data-title="${escapeAttr(t.title)}">刪除</button>
+    </div>`).join("");
+  list.querySelectorAll("[data-enter]").forEach((b) =>
+    (b.onclick = () => {
+      const t = trips.find((x) => x.id === b.dataset.enter);
+      saveTrip(t);
+      enterTrip(t.id).catch((e) => alert(humanError(e)));
+    }));
+  list.querySelectorAll("[data-del]").forEach((b) =>
+    (b.onclick = () => onDeleteTrip(b.dataset.del, b.dataset.title)));
+}
+
+async function onDeleteTrip(id, title) {
+  if (!confirm(`確定刪除「${title}」？\n此行程的所有項目與記帳都會一起刪除，無法復原。`)) return;
+  try {
+    await deleteTrip(id);
+    if (getSavedTrip()?.id === id) clearSavedTrip();
+    renderMyTrips(await listMyTrips());
+  } catch (e) { alert(humanError(e)); }
 }
 
 // ---------- 啟動 ----------
@@ -417,8 +459,9 @@ async function boot() {
   $("#switchTrip").onclick = () => {
     clearSavedTrip();
     if (unsub) { unsub(); unsub = null; }
+    if (unsubItin) { unsubItin(); unsubItin = null; }
     $("#tripBadge").hidden = true;
-    show("joinView");
+    showJoin();
   };
   $("#copyCode").onclick = async () => {
     await navigator.clipboard.writeText($("#tripCode").textContent);
@@ -451,7 +494,7 @@ async function boot() {
       if (me) { await enterTrip(saved.id); return; }
     } catch { /* 落到加入畫面 */ }
   }
-  show("joinView");
+  await showJoin();
 }
 
 boot();
