@@ -28,6 +28,7 @@ let unsub = null;       // 行程/成員 realtime 取消訂閱
 let unsubItin = null;   // 行程項目 realtime 取消訂閱
 let unsubExp = null;    // 記帳 realtime 取消訂閱
 let createCurrencies = new Set(); // 建立行程時已選的幣別
+let adminTrips = [];              // 管理頁目前的行程清單（指派行程彈窗用）
 const state = {
   trip: null, me: null, activeDay: null, mapInit: false,
   members: [], currencies: [], splitSel: new Set(), weatherLoaded: false,
@@ -35,22 +36,74 @@ const state = {
 };
 const isAdmin = () => !!state.profile?.is_admin;
 
-// ---------- 分頁路由 + 抽屜 ----------
+// ---------- 分頁路由（桌機側欄 + 手機底部分頁列共用 data-page）----------
 const PAGES = ["overview", "itinerary", "expenses", "weather", "admin"];
-
-function openDrawer() { $("#drawer").classList.add("open"); $("#drawerBackdrop").classList.add("show"); }
-function closeDrawer() { $("#drawer").classList.remove("open"); $("#drawerBackdrop").classList.remove("show"); }
 
 function showPage(name) {
   if (!PAGES.includes(name)) name = "overview";
   if (name === "admin" && !isAdmin()) name = "overview";        // 管理頁僅管理員
   if (!state.trip && name !== "overview" && name !== "admin") name = "overview"; // 沒選行程只能看總覽/管理
   PAGES.forEach((p) => ($("#view-" + p).hidden = p !== name));
-  document.querySelectorAll(".nav-item").forEach((b) => b.classList.toggle("is-active", b.dataset.page === name));
+  document.querySelectorAll(".nav-item, .tab-item").forEach((b) => b.classList.toggle("is-active", b.dataset.page === name));
   if (location.hash.slice(1) !== name) history.replaceState(null, "", "#" + name);
-  closeDrawer();
+  closePopovers();
   if (name === "weather") ensureWeather();
   if (name === "admin") renderAdmin();
+}
+
+// ---------- 頂部：行程切換器 + 帳號選單（popover）----------
+function closePopovers() {
+  const tm = $("#tripMenu"); if (tm) tm.hidden = true;
+  const am = $("#accountMenu"); if (am) am.hidden = true;
+}
+
+// 頂部切換器文字 / 顯隱（標題只出現在頂部一處）
+function renderTripSwitcher() {
+  const sw = $("#tripSwitcher");
+  if (!sw) return;
+  sw.hidden = !state.trip;
+  $("#tripSwitcherTitle").textContent = state.trip ? state.trip.title : "";
+}
+
+async function openTripMenu() {
+  const menu = $("#tripMenu");
+  if (!menu.hidden) { menu.hidden = true; return; }
+  $("#accountMenu").hidden = true;
+  menu.innerHTML = `<div class="popover-head">載入中…</div>`;
+  menu.hidden = false;
+  let trips = [];
+  try { trips = await listMyTrips(); } catch { /* ignore */ }
+  const cur = state.trip?.id;
+  let html = `<div class="popover-head">切換行程</div>`;
+  html += trips.length ? trips.map((t) => `
+    <button class="popover-item ${t.id === cur ? "is-current" : ""}" type="button" data-go="${t.id}">
+      ${escapeHtml(t.title)}
+      <span class="sub">${t.start_date ? t.start_date + (t.end_date ? " ~ " + t.end_date : "") : "未設定日期"}</span>
+    </button>`).join("") : `<div class="popover-head">尚無行程</div>`;
+  if (isAdmin()) html += `<div class="popover-sep"></div><button class="popover-item" type="button" data-admin="1">⚙️ 管理行程與帳號</button>`;
+  menu.innerHTML = html;
+  menu.querySelectorAll("[data-go]").forEach((b) => (b.onclick = () => {
+    closePopovers();
+    const t = trips.find((x) => x.id === b.dataset.go);
+    if (!t || t.id === cur) return;
+    saveTrip(t); enterTrip(t.id).catch((e) => toast(humanError(e), false));
+  }));
+  const adminBtn = menu.querySelector("[data-admin]");
+  if (adminBtn) adminBtn.onclick = () => { closePopovers(); showPage("admin"); };
+}
+
+function openAccountMenu() {
+  const menu = $("#accountMenu");
+  if (!menu.hidden) { menu.hidden = true; return; }
+  $("#tripMenu").hidden = true;
+  const p = state.profile;
+  const name = p ? (p.username || p.email || "使用者") : "使用者";
+  menu.innerHTML = `
+    <div class="popover-head">${escapeHtml(name)}${isAdmin() ? " 👑 管理員" : ""}</div>
+    <div class="popover-sep"></div>
+    <button class="popover-item" type="button" data-logout="1">登出</button>`;
+  menu.querySelector("[data-logout]").onclick = async () => { closePopovers(); await logout(); showLogin(); };
+  menu.hidden = false;
 }
 
 async function ensureWeather(force = false) {
@@ -194,9 +247,8 @@ async function enterTrip(tripId) {
 
   document.body.classList.add("in-trip");
   show("appView");
-  // 頂部徽章顯示目前行程（抽屜標題維持 App 品牌，避免左右重複）
-  $("#tripBadge").hidden = false;
-  $("#tripBadgeTitle").textContent = trip.title;
+  // 頂部行程切換器顯示目前行程（標題只出現在頂部一處）
+  renderTripSwitcher();
   renderOverviewState();
   renderMyTrips(await listMyTrips());
   // 進入時依 hash 決定起始頁
@@ -247,15 +299,14 @@ async function renderTrip(trip) {
   renderAddCurrency(trip, currencies);
 }
 
-// 切換「有/無選定行程」的總覽呈現 + 抽屜分頁可用性
+// 切換「有/無選定行程」的總覽呈現 + 分頁可用性（側欄與底部列同步）
 function renderOverviewState() {
   const has = !!state.trip;
   $("#overviewTripDetail").hidden = !has;
   $("#noTripHint").hidden = has;
-  $("#tripBadge").hidden = !has;
-  if (has) $("#tripBadgeTitle").textContent = state.trip.title;
+  renderTripSwitcher();
   // 沒選行程時，行程/記帳/天氣分頁不可用；總覽與管理頁永遠可用
-  document.querySelectorAll(".nav-item").forEach((b) => {
+  document.querySelectorAll(".nav-item, .tab-item").forEach((b) => {
     if (b.dataset.page !== "overview" && b.dataset.page !== "admin") b.classList.toggle("is-disabled", !has);
   });
 }
@@ -312,6 +363,7 @@ async function renderAdmin() {
   uBox.innerHTML = `<p class="status">載入中…</p>`;
   let trips = [];
   try { trips = await listMyTrips(); } catch { /* ignore */ }
+  adminTrips = trips; // 給指派行程彈窗用
 
   // 行程管理
   tBox.innerHTML = trips.length ? trips.map((t) => `
@@ -327,7 +379,7 @@ async function renderAdmin() {
       </div>
     </div>`).join("") : `<p class="status">還沒有行程，按「＋ 建立行程」。</p>`;
   tBox.querySelectorAll("[data-enter-trip]").forEach((b) => (b.onclick = () => {
-    const t = trips.find((x) => x.id === b.dataset.enterTrip); saveTrip(t); enterTrip(t.id).catch((e) => alert(humanError(e)));
+    const t = trips.find((x) => x.id === b.dataset.enterTrip); saveTrip(t); enterTrip(t.id).catch((e) => toast(humanError(e), false));
   }));
   tBox.querySelectorAll("[data-edit-trip]").forEach((b) => (b.onclick = () => openTripEdit(trips.find((x) => x.id === b.dataset.editTrip))));
   tBox.querySelectorAll("[data-del-trip]").forEach((b) => (b.onclick = () => onDeleteTrip(b.dataset.delTrip, b.dataset.title).then(() => renderAdmin())));
@@ -345,7 +397,7 @@ async function renderAdmin() {
             `<span class="pill">${escapeHtml(t.title)} ${u.is_admin ? "" : `<button class="pill-x" data-unassign="${u.id}|${t.id}" title="移出">×</button>`}</span>`).join("") || '<span class="status">未指派任何行程</span>'}</div>
         </div>
         <div class="admin-row-actions">
-          ${u.is_admin ? "" : `<button class="btn btn--ghost btn--sm" data-assign="${u.id}">指派行程</button>`}
+          ${u.is_admin ? "" : `<button class="btn btn--ghost btn--sm" data-assign="${u.id}" data-name="${escapeAttr(u.username || u.email)}">指派行程</button>`}
           <button class="btn btn--ghost btn--sm" data-reset="${u.id}" data-name="${escapeAttr(u.username || u.email)}">重設密碼</button>
           ${u.is_admin ? "" : `<button class="btn btn--ghost btn--sm" data-deluser="${u.id}" data-name="${escapeAttr(u.username || u.email)}">刪除</button>`}
         </div>
@@ -353,25 +405,16 @@ async function renderAdmin() {
 
     uBox.querySelectorAll("[data-unassign]").forEach((b) => (b.onclick = async () => {
       const [user_id, trip_id] = b.dataset.unassign.split("|");
-      if (!confirm(`把此帳號從「${tripTitle(trip_id)}」移出？`)) return;
-      try { await adminAction("unassign_trip", { user_id, trip_id }); await renderAdmin(); } catch (e) { alert(humanError(e)); }
+      if (!await confirmDialog({ title: "移出行程", body: `把此帳號從「${tripTitle(trip_id)}」移出？`, danger: true, okText: "移出" })) return;
+      try { await adminAction("unassign_trip", { user_id, trip_id }); toast("已移出"); await renderAdmin(); } catch (e) { toast(humanError(e), false); }
     }));
-    uBox.querySelectorAll("[data-assign]").forEach((b) => (b.onclick = async () => {
-      const user_id = b.dataset.assign;
-      const opts = trips.map((t, i) => `${i + 1}. ${t.title}`).join("\n");
-      const pick = prompt(`指派到哪個行程？輸入編號：\n${opts}`);
-      const idx = Number(pick) - 1;
-      if (!(idx >= 0 && idx < trips.length)) return;
-      try { await adminAction("assign_trip", { user_id, trip_id: trips[idx].id }); await renderAdmin(); } catch (e) { alert(humanError(e)); }
-    }));
-    uBox.querySelectorAll("[data-reset]").forEach((b) => (b.onclick = async () => {
-      const pw = prompt(`為「${b.dataset.name}」設定新密碼（至少 6 碼）：`);
-      if (!pw || pw.length < 6) { if (pw !== null) alert("密碼至少 6 碼"); return; }
-      try { await adminAction("reset_password", { user_id: b.dataset.reset, password: pw }); alert("已重設密碼"); } catch (e) { alert(humanError(e)); }
-    }));
+    uBox.querySelectorAll("[data-assign]").forEach((b) => (b.onclick = () =>
+      openAssignTrip(b.dataset.assign, b.dataset.name)));
+    uBox.querySelectorAll("[data-reset]").forEach((b) => (b.onclick = () =>
+      openResetPw(b.dataset.reset, b.dataset.name)));
     uBox.querySelectorAll("[data-deluser]").forEach((b) => (b.onclick = async () => {
-      if (!confirm(`刪除帳號「${b.dataset.name}」？此動作無法復原。`)) return;
-      try { await adminAction("delete_user", { user_id: b.dataset.deluser }); await renderAdmin(); } catch (e) { alert(humanError(e)); }
+      if (!await confirmDialog({ title: "刪除帳號", body: `刪除帳號「${b.dataset.name}」？此動作無法復原。`, danger: true, okText: "刪除" })) return;
+      try { await adminAction("delete_user", { user_id: b.dataset.deluser }); toast("已刪除帳號"); await renderAdmin(); } catch (e) { toast(humanError(e), false); }
     }));
   } catch (e) {
     uBox.innerHTML = `<p class="status" data-ok="false">${humanError(e)}</p>`;
@@ -404,12 +447,61 @@ async function onTripEditSubmit(e) {
   finally { setBusy(f, false); }
 }
 
+// 指派行程 Modal
+function openAssignTrip(user_id, name) {
+  const f = $("#assignTripForm");
+  f.reset(); $("#assignTripError").hidden = true;
+  f.user_id.value = user_id;
+  $("#assignTripUser").textContent = name || "";
+  $("#assignTripSelect").innerHTML = adminTrips.length
+    ? adminTrips.map((t) => `<option value="${t.id}">${escapeHtml(t.title)}</option>`).join("")
+    : `<option value="">尚無行程可指派</option>`;
+  $("#assignTripModal").hidden = false;
+}
+async function onAssignTripSubmit(e) {
+  e.preventDefault();
+  const f = e.target; const err = $("#assignTripError"); err.hidden = true;
+  const trip_id = $("#assignTripSelect").value;
+  if (!trip_id) { err.textContent = "請先選擇行程"; err.hidden = false; return; }
+  try {
+    setBusy(f, true);
+    await adminAction("assign_trip", { user_id: f.user_id.value, trip_id });
+    $("#assignTripModal").hidden = true;
+    toast("已指派行程");
+    await renderAdmin();
+  } catch (e2) { err.textContent = humanError(e2); err.hidden = false; }
+  finally { setBusy(f, false); }
+}
+
+// 重設密碼 Modal
+function openResetPw(user_id, name) {
+  const f = $("#resetPwForm");
+  f.reset(); $("#resetPwError").hidden = true;
+  f.user_id.value = user_id;
+  $("#resetPwUser").textContent = name || "";
+  $("#resetPwModal").hidden = false;
+}
+async function onResetPwSubmit(e) {
+  e.preventDefault();
+  const f = e.target; const err = $("#resetPwError"); err.hidden = true;
+  const password = f.password.value;
+  if (!password || password.length < 6) { err.textContent = "密碼至少 6 碼"; err.hidden = false; return; }
+  try {
+    setBusy(f, true);
+    await adminAction("reset_password", { user_id: f.user_id.value, password });
+    $("#resetPwModal").hidden = true;
+    toast("已重設密碼");
+  } catch (e2) { err.textContent = humanError(e2); err.hidden = false; }
+  finally { setBusy(f, false); }
+}
+
 async function onRemoveMember(id, name) {
-  if (!confirm(`移除成員「${name}」？\n（若對方已記帳，相關記錄的關聯會被清除）`)) return;
+  if (!await confirmDialog({ title: "移除成員", body: `移除成員「${name}」？\n（若對方已記帳，相關記錄的關聯會被清除）`, danger: true, okText: "移除" })) return;
   try {
     await removeMember(id);
+    toast("已移除成員");
     await renderTrip(state.trip);
-  } catch (e) { alert(humanError(e)); }
+  } catch (e) { toast(humanError(e), false); }
 }
 
 // ---------- 登入 / 註冊 ----------
@@ -424,9 +516,10 @@ function loginErr(err) {
 }
 function showLogin() {
   document.body.classList.remove("in-trip");
-  closeDrawer();
+  closePopovers();
   state.profile = null; state.trip = null;
-  $("#tripBadge").hidden = true; $("#tripBadgeTitle").textContent = "";
+  $("#tripSwitcher").hidden = true; $("#tripSwitcherTitle").textContent = "";
+  $("#accountBtn").hidden = true;
   $("#loginForm").hidden = false;
   loginError("");
   show("loginView");
@@ -440,9 +533,14 @@ async function onLoginSubmit(e) {
 }
 function applyAccountUI() {
   const p = state.profile;
-  $("#drawerAccount").textContent = p ? `${p.username || p.email || "使用者"}${isAdmin() ? "（管理員）" : ""}` : "";
-  const adminNav = document.querySelector('.nav-item[data-page="admin"]');
-  if (adminNav) adminNav.hidden = !isAdmin();
+  const name = p ? (p.username || p.email || "使用者") : "";
+  $("#drawerAccount").textContent = p ? `${name}${isAdmin() ? "（管理員）" : ""}` : "";
+  // 頂部帳號鈕（手機登出入口）
+  $("#accountBtn").hidden = !p;
+  $("#accountInitial").textContent = (name || "·").slice(0, 1).toUpperCase();
+  // 管理頁入口（側欄 + 底部列同步）
+  document.querySelectorAll('.nav-item[data-page="admin"], .tab-item[data-page="admin"]')
+    .forEach((el) => (el.hidden = !isAdmin()));
 }
 async function onLoggedIn() {
   try { state.profile = await getProfile(); } catch { state.profile = null; }
@@ -496,7 +594,7 @@ async function onAiItinGo() {
         }, state.me?.id);
         b.textContent = "已加入"; b.disabled = true;
         renderItinerary(state.trip).catch(() => {});
-      } catch (e) { alert(humanError(e)); }
+      } catch (e) { toast(humanError(e), false); }
     }));
   } catch (e) {
     out.innerHTML = `<p class="status" data-ok="false">${humanError(e)}</p>`;
@@ -536,7 +634,7 @@ async function onNlExpense() {
     updateSplitHint();
     $("#nlExpenseInput").value = "";
   } catch (e) {
-    alert("AI 解析失敗：" + humanError(e));
+    toast("AI 解析失敗：" + humanError(e), false);
   } finally {
     btn.disabled = false; btn.textContent = old;
   }
@@ -555,7 +653,7 @@ function renderBaseSelect(trip) {
       const cur = await getTripCurrencies(trip.id);
       if (!cur.includes(sel.value)) await addTripCurrency(trip.id, sel.value);
       renderTrip(trip);
-    } catch (err) { alert(humanError(err)); }
+    } catch (err) { toast(humanError(err), false); }
   };
 }
 
@@ -572,7 +670,7 @@ function renderCurrencyPills(trip, currencies) {
   wrap.querySelectorAll(".pill-x").forEach((b) => {
     b.onclick = async () => {
       try { await removeTripCurrency(trip.id, b.dataset.remove); renderTrip(trip); }
-      catch (err) { alert(humanError(err)); }
+      catch (err) { toast(humanError(err), false); }
     };
   });
 
@@ -599,7 +697,7 @@ function renderAddCurrency(trip, currencies) {
   $("#addCurrencyBtn").onclick = async () => {
     if (!sel.value) return;
     try { await addTripCurrency(trip.id, sel.value); renderTrip(trip); }
-    catch (err) { alert(humanError(err)); }
+    catch (err) { toast(humanError(err), false); }
   };
 }
 
@@ -767,12 +865,13 @@ async function onItemSubmit(e) {
 
 async function onItemDelete() {
   const id = $("#itemForm").id.value;
-  if (!id || !confirm("確定刪除這個項目？")) return;
+  if (!id) return;
+  if (!await confirmDialog({ title: "刪除項目", body: "確定刪除這個項目？", danger: true, okText: "刪除" })) return;
   try {
     await deleteItem(id);
     closeItemModal();
     await renderItinerary(state.trip);
-  } catch (err) { alert(humanError(err)); }
+  } catch (err) { toast(humanError(err), false); }
 }
 
 // ---------- 記帳 + 結算 ----------
@@ -857,7 +956,7 @@ function renderSettlement(expenses, base) {
 
 // ---------- 支出 Modal ----------
 function openExpenseModal(exp) {
-  if (!state.members.length) { alert("尚未載入成員，請稍候再試。"); return; }
+  if (!state.members.length) { toast("尚未載入成員，請稍候再試。", false); return; }
   const f = $("#expenseForm");
   f.reset();
   $("#expenseError").hidden = true;
@@ -956,12 +1055,13 @@ async function onExpenseSubmit(e) {
 
 async function onExpenseDelete() {
   const id = $("#expenseForm").id.value;
-  if (!id || !confirm("確定刪除這筆支出？")) return;
+  if (!id) return;
+  if (!await confirmDialog({ title: "刪除支出", body: "確定刪除這筆支出？", danger: true, okText: "刪除" })) return;
   try {
     await deleteExpense(id);
     closeExpenseModal();
     await renderExpenses(state.trip);
-  } catch (err) { alert(humanError(err)); }
+  } catch (err) { toast(humanError(err), false); }
 }
 
 // ---------- 共用 ----------
@@ -973,6 +1073,40 @@ function escapeHtml(s) {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 function escapeAttr(s) { return escapeHtml(s); }
+
+// 底部短暫提示（取代成功/失敗 alert）
+let toastTimer = null;
+function toast(msg, ok = true) {
+  const el = $("#toast");
+  el.textContent = msg;
+  el.dataset.ok = ok ? "true" : "false";
+  el.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (el.hidden = true), 2600);
+}
+
+// 統一確認彈窗（取代原生 confirm）→ Promise<boolean>
+function confirmDialog({ title = "確認", body = "", danger = false, okText = "確定" } = {}) {
+  return new Promise((resolve) => {
+    const modal = $("#confirmModal");
+    $("#confirmTitle").textContent = title;
+    $("#confirmBody").textContent = body;
+    const okBtn = $("#confirmOk");
+    okBtn.textContent = okText;
+    okBtn.classList.toggle("btn--ghost", false);
+    okBtn.style.background = danger ? "var(--accent-dark)" : "";
+    const close = (val) => {
+      modal.hidden = true;
+      okBtn.onclick = null; $("#confirmCancel").onclick = null; modal.onclick = null;
+      resolve(val);
+    };
+    okBtn.onclick = () => close(true);
+    $("#confirmCancel").onclick = () => close(false);
+    modal.onclick = (e) => { if (e.target.id === "confirmModal") close(false); };
+    modal.hidden = false;
+  });
+}
+
 function humanError(err) {
   const m = err?.message || String(err);
   if (/code taken/i.test(m)) return "這個行程碼已被使用，換一個吧。";
@@ -987,12 +1121,14 @@ function humanError(err) {
 // 沒有選定行程時的著陸：顯示 app 外殼 + 總覽中樞
 async function showHub() {
   state.trip = null;
-  document.body.classList.add("in-trip"); // 顯示抽屜與中樞外殼
+  let trips = [];
+  try { trips = await listMyTrips(); } catch { /* 略過 */ }
+  // 只有一個行程 → 直接進入，省去先在總覽點選
+  if (trips.length === 1) { saveTrip(trips[0]); await enterTrip(trips[0].id); return; }
+  document.body.classList.add("in-trip"); // 顯示外殼 + 中樞
   show("appView");
   renderOverviewState();
   showPage("overview");
-  let trips = [];
-  try { trips = await listMyTrips(); } catch { /* 略過 */ }
   renderMyTrips(trips);
   // 管理員若還沒有行程，直接開建立 Modal
   if (!trips.length && isAdmin()) openTripModal();
@@ -1019,12 +1155,12 @@ function renderMyTrips(trips) {
     (b.onclick = () => {
       const t = trips.find((x) => x.id === b.dataset.enter);
       saveTrip(t);
-      enterTrip(t.id).catch((e) => alert(humanError(e)));
+      enterTrip(t.id).catch((e) => toast(humanError(e), false));
     }));
 }
 
 async function onDeleteTrip(id, title) {
-  if (!confirm(`確定刪除「${title}」？\n此行程的所有項目與記帳都會一起刪除，無法復原。`)) return;
+  if (!await confirmDialog({ title: "刪除行程", body: `確定刪除「${title}」？\n此行程的所有項目與記帳都會一起刪除，無法復原。`, danger: true, okText: "刪除" })) return;
   try {
     await deleteTrip(id);
     const wasCurrent = state.trip?.id === id;
@@ -1036,8 +1172,9 @@ async function onDeleteTrip(id, title) {
       state.trip = null;
       renderOverviewState();
     }
+    toast("已刪除行程");
     renderMyTrips(await listMyTrips());
-  } catch (e) { alert(humanError(e)); }
+  } catch (e) { toast(humanError(e), false); }
 }
 
 // ---------- 啟動 ----------
@@ -1063,6 +1200,14 @@ async function boot() {
   $("#tripEditForm").addEventListener("submit", onTripEditSubmit);
   $("#tripEditModal").addEventListener("click", (e) => { if (e.target.id === "tripEditModal") $("#tripEditModal").hidden = true; });
 
+  // 指派行程 / 重設密碼 彈窗
+  $("#assignTripForm").addEventListener("submit", onAssignTripSubmit);
+  $("#assignTripClose").onclick = $("#assignTripCancel").onclick = () => ($("#assignTripModal").hidden = true);
+  $("#assignTripModal").addEventListener("click", (e) => { if (e.target.id === "assignTripModal") $("#assignTripModal").hidden = true; });
+  $("#resetPwForm").addEventListener("submit", onResetPwSubmit);
+  $("#resetPwClose").onclick = $("#resetPwCancel").onclick = () => ($("#resetPwModal").hidden = true);
+  $("#resetPwModal").addEventListener("click", (e) => { if (e.target.id === "resetPwModal") $("#resetPwModal").hidden = true; });
+
   // AI 建議行程
   $("#aiItinBtn").onclick = openAiItin;
   $("#aiItinClose").onclick = () => ($("#aiItinModal").hidden = true);
@@ -1082,10 +1227,16 @@ async function boot() {
     if (e.target.id === "itemModal") closeItemModal(); // 點背景關閉
   });
 
-  // 抽屜 + 分頁路由
-  $("#navToggle").onclick = openDrawer;
-  $("#drawerBackdrop").onclick = closeDrawer;
-  document.querySelectorAll(".nav-item").forEach((b) => (b.onclick = () => showPage(b.dataset.page)));
+  // 分頁路由（側欄 + 底部列）
+  document.querySelectorAll(".nav-item, .tab-item").forEach((b) => (b.onclick = () => showPage(b.dataset.page)));
+
+  // 頂部行程切換器 + 帳號選單（popover）
+  $("#tripSwitcher").onclick = (e) => { e.stopPropagation(); openTripMenu(); };
+  $("#accountBtn").onclick = (e) => { e.stopPropagation(); openAccountMenu(); };
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest("#tripMenu, #tripSwitcher, #accountMenu, #accountBtn")) closePopovers();
+  });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePopovers(); });
   window.addEventListener("hashchange", () => {
     if (!$("#appView").hidden) showPage(location.hash.slice(1) || "overview");
   });
@@ -1094,7 +1245,7 @@ async function boot() {
   $("#refreshWeather").onclick = () => ensureWeather(true);
   $("#weatherManualBtn").onclick = () => {
     const q = $("#weatherManualInput").value.trim();
-    if (q) loadCityWeather(q).catch((e) => alert(humanError(e)));
+    if (q) loadCityWeather(q).catch((e) => toast(humanError(e), false));
   };
   $("#weatherManualInput").addEventListener("keydown", (e) => {
     if (e.key === "Enter") { e.preventDefault(); $("#weatherManualBtn").click(); }
