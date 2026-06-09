@@ -4,13 +4,13 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#FFF4E8" />
-  <title>日本旅遊規劃系統</title>
+  <title>旅程規劃 · Trip Planner</title>
   <link rel="stylesheet" href="./css/app.css" />
 </head>
 <body>
   <header class="topbar">
     <div class="page topbar-inner">
-      <div class="brand">🗾 <span>日本旅遊規劃</span></div>
+      <div class="brand">🧳 <span>旅程規劃</span></div>
       <div id="tripBadge" class="trip-badge" hidden>
         <span id="tripBadgeTitle"></span>
         <button id="switchTrip" class="btn btn--ghost btn--sm" type="button">切換行程</button>
@@ -57,8 +57,9 @@
           <label>結算基準幣別
             <select name="base"></select>
           </label>
-          <label>啟用幣別（可複選，之後可改）
-            <div id="currencyChecks" class="currency-checks"></div>
+          <label>啟用幣別（可複選，之後仍可增減）
+            <select id="createCurrencies" multiple size="6"></select>
+            <small class="status">按住 Ctrl／⌘ 可多選。基準幣別會自動納入。</small>
           </label>
           <label>你的名字
             <input name="name" placeholder="小明" maxlength="20" required />
@@ -106,18 +107,77 @@
       </div>
 
       <div class="card">
-        <h2 class="card-title">功能</h2>
-        <div class="feature-tabs">
-          <span class="feature-tab is-done">加入行程 ✓</span>
-          <span class="feature-tab is-todo">行程規劃 · Phase 2</span>
-          <span class="feature-tab is-todo">多幣別記帳 · Phase 3</span>
-          <span class="feature-tab is-todo">結算 · Phase 3</span>
-          <span class="feature-tab is-todo">天氣 · Phase 4</span>
-          <span class="feature-tab is-todo">地圖 · Phase 2</span>
-          <span class="feature-tab is-todo">AI 助手 · Phase 5</span>
+        <div class="card-head">
+          <h2 class="card-title">行程規劃</h2>
+          <button id="addItemBtn" class="btn btn--sm" type="button">＋ 新增項目</button>
         </div>
+        <div id="dayTabs" class="day-tabs"></div>
+        <div id="itineraryList" class="itinerary-list"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2 class="card-title">地圖</h2>
+          <a id="mapOpen" class="btn btn--ghost btn--sm" target="_blank" rel="noopener" href="#">在 Google Maps 開啟</a>
+        </div>
+        <div id="mapTitle" class="status" style="margin-bottom:8px;">點行程項目的「地圖」即可在此顯示</div>
+        <iframe id="mapFrame" class="map-frame" loading="lazy" referrerpolicy="no-referrer-when-downgrade"
+                src="https://www.google.com/maps?q=Japan&output=embed"></iframe>
+      </div>
+
+      <div class="feature-tabs" style="margin-top:6px;">
+        <span class="feature-tab is-done">加入行程 ✓</span>
+        <span class="feature-tab is-done">行程規劃 ✓</span>
+        <span class="feature-tab is-done">即時匯率 ✓</span>
+        <span class="feature-tab is-todo">多幣別記帳 · Phase 3</span>
+        <span class="feature-tab is-todo">天氣 · Phase 4</span>
+        <span class="feature-tab is-todo">AI 助手 · Phase 5</span>
       </div>
     </section>
+
+    <!-- 新增/編輯項目 Modal -->
+    <div id="itemModal" class="modal" hidden>
+      <div class="modal-box card">
+        <div class="card-head">
+          <h2 id="itemModalTitle" class="card-title">新增項目</h2>
+          <button id="itemModalClose" class="btn btn--ghost btn--sm" type="button">✕</button>
+        </div>
+        <form id="itemForm" class="form">
+          <input type="hidden" name="id" />
+          <label>標題
+            <input name="title" placeholder="淺草寺、一蘭拉麵…" maxlength="60" required />
+          </label>
+          <div class="row">
+            <label>日期 <input name="day_date" type="date" /></label>
+            <label>分類
+              <select name="category">
+                <option value="景點">景點</option>
+                <option value="餐廳">餐廳</option>
+                <option value="交通">交通</option>
+                <option value="住宿">住宿</option>
+                <option value="購物">購物</option>
+                <option value="其他">其他</option>
+              </select>
+            </label>
+          </div>
+          <div class="row">
+            <label>開始 <input name="start_time" type="time" /></label>
+            <label>結束 <input name="end_time" type="time" /></label>
+          </div>
+          <label>地點 / 地圖搜尋字
+            <input name="location_name" placeholder="例如：東京晴空塔" maxlength="80" />
+          </label>
+          <label>備註
+            <textarea name="notes" rows="2" placeholder="訂位、票價、交通方式…"></textarea>
+          </label>
+          <div class="row" style="justify-content:flex-end;">
+            <button id="itemDeleteBtn" class="btn btn--ghost" type="button" hidden>刪除</button>
+            <button class="btn" type="submit">儲存</button>
+          </div>
+          <p id="itemError" class="status" data-ok="false" hidden></p>
+        </form>
+      </div>
+    </div>
   </main>
 
   <script src="./config.js"></script>

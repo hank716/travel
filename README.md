@@ -2,10 +2,14 @@
 
 多人 · 多幣別 · 即時的旅遊規劃 / 記帳網頁。前端純靜態跑在 **GitHub Pages**，後端用 **Supabase**（Postgres + RLS + Realtime + Edge Functions）。完整架構見 [`PLAN.md`](./PLAN.md)。
 
+**線上版**：https://hank716.github.io/travel/
+
 ## 目前進度
 - ✅ **Phase 0** 基礎：repo 結構、`schema.sql` + RLS、可部署骨架
-- ✅ **Phase 1** 加入行程：建立/加入行程碼、自選名字、即時成員清單、幣別設定（可增減）
-- ⬜ Phase 2 行程 CRUD ｜ Phase 3 多幣別記帳 ｜ Phase 4 天氣 ｜ Phase 5 AI ｜ Phase 6 收尾
+- ✅ **Phase 1** 加入行程：建立/加入行程碼、自選名字、即時成員清單
+- ✅ **全世界幣別 + 即時匯率**：ISO 4217 完整下拉、open.er-api 即時匯率、每日快取
+- ✅ **Phase 2** 行程規劃：項目 CRUD、依日期分頁、Google Maps 帶入、即時同步
+- ⬜ Phase 3 多幣別記帳/結算 ｜ Phase 4 天氣 ｜ Phase 5 AI ｜ Phase 6 收尾
 
 ## 結構
 ```
@@ -13,8 +17,10 @@ index.html              主應用（加入畫面 ↔ 行程主畫面）
 config.js               Supabase URL + anon key（公開、可 commit）
 css/app.css             設計系統
 js/supabase.js          client + 匿名登入
-js/constants.js         幣別清單、成員配色
+js/constants.js         全世界幣別清單（ISO 4217）、成員配色
+js/fx.js                即時匯率 + 三層快取
 js/trip.js              行程資料層（建立/加入/成員/幣別/Realtime）
+js/itinerary.js         行程項目資料層（CRUD/Realtime）
 js/app.js               UI 控制器
 supabase/schema.sql     建表 + RLS + RPC（create_trip / join_trip）
 supabase/functions/ai-assist/   Edge Function（Gemini，Phase 5）

@@ -1,6 +1,10 @@
 // Phase 1 控制器：路由（加入畫面 ↔ 行程主畫面）、表單、即時成員/幣別。
 import { ensureAuth } from "./supabase.js";
-import { CURRENCIES, CURRENCY_CODES, pickColor } from "./constants.js";
+import { CURRENCIES, CURRENCY_CODES, currencyLabel, pickColor } from "./constants.js";
+import { getRates, rateToBase } from "./fx.js";
+import {
+  listItems, addItem, updateItem, deleteItem, subscribeItinerary,
+} from "./itinerary.js";
 import {
   getSavedTrip, saveTrip, clearSavedTrip,
   createTrip, joinTrip, getTrip, getMyMember,
@@ -11,7 +15,9 @@ import {
 const $ = (s) => document.querySelector(s);
 const { DEFAULT_BASE_CURRENCY, DEFAULT_CURRENCIES } = window.APP_CONFIG;
 
-let unsub = null; // realtime 取消訂閱
+let unsub = null;       // 行程/成員 realtime 取消訂閱
+let unsubItin = null;   // 行程項目 realtime 取消訂閱
+const state = { trip: null, me: null, activeDay: null };
 
 // ---------- 視圖切換 ----------
 function show(view) {
@@ -37,18 +43,16 @@ function buildJoinView() {
     });
   });
 
-  // 基準幣別下拉
+  // 基準幣別下拉（全世界）
   const baseSel = $('#createForm select[name="base"]');
   baseSel.innerHTML = CURRENCY_CODES.map(
-    (c) => `<option value="${c}" ${c === DEFAULT_BASE_CURRENCY ? "selected" : ""}>${CURRENCIES[c].flag} ${c} ${CURRENCIES[c].name}</option>`
+    (c) => `<option value="${c}" ${c === DEFAULT_BASE_CURRENCY ? "selected" : ""}>${currencyLabel(c)}</option>`
   ).join("");
 
-  // 啟用幣別複選
-  $("#currencyChecks").innerHTML = CURRENCY_CODES.map((c) => `
-    <label class="check">
-      <input type="checkbox" value="${c}" ${DEFAULT_CURRENCIES.includes(c) ? "checked" : ""} />
-      <span>${CURRENCIES[c].flag} ${c}</span>
-    </label>`).join("");
+  // 啟用幣別多選（全世界，預設勾選 DEFAULT_CURRENCIES）
+  $("#createCurrencies").innerHTML = CURRENCY_CODES.map(
+    (c) => `<option value="${c}" ${DEFAULT_CURRENCIES.includes(c) ? "selected" : ""}>${currencyLabel(c)}</option>`
+  ).join("");
 
   $("#joinForm").addEventListener("submit", onJoinSubmit);
   $("#createForm").addEventListener("submit", onCreateSubmit);
@@ -77,7 +81,7 @@ async function onCreateSubmit(e) {
   e.preventDefault();
   showError("");
   const f = e.target;
-  const currencies = [...f.querySelectorAll('#currencyChecks input:checked')].map((i) => i.value);
+  const currencies = [...$("#createCurrencies").selectedOptions].map((o) => o.value);
   const base = f.base.value;
   if (!currencies.includes(base)) currencies.push(base); // 基準幣別一定要啟用
   try {
@@ -103,8 +107,12 @@ async function onCreateSubmit(e) {
 // ---------- 行程主畫面 ----------
 async function enterTrip(tripId) {
   if (unsub) { unsub(); unsub = null; }
+  if (unsubItin) { unsubItin(); unsubItin = null; }
   const trip = await getTrip(tripId);
+  state.trip = trip;
+  state.me = await getMyMember(tripId);
   await renderTrip(trip);
+  await renderItinerary(trip);
   show("appView");
 
   // 頂部徽章
@@ -113,6 +121,8 @@ async function enterTrip(tripId) {
 
   // 即時：成員/幣別變動就重畫
   unsub = subscribeTrip(tripId, () => renderTrip(trip).catch(console.error));
+  // 即時：行程項目變動就重畫
+  unsubItin = subscribeItinerary(tripId, () => renderItinerary(trip).catch(console.error));
 }
 
 async function renderTrip(trip) {
@@ -144,7 +154,7 @@ async function renderTrip(trip) {
 function renderBaseSelect(trip) {
   const sel = $("#baseSelect");
   sel.innerHTML = CURRENCY_CODES.map(
-    (c) => `<option value="${c}" ${c === trip.base_currency ? "selected" : ""}>${c}</option>`
+    (c) => `<option value="${c}" ${c === trip.base_currency ? "selected" : ""}>${currencyLabel(c)}</option>`
   ).join("");
   sel.onchange = async () => {
     try {
@@ -159,18 +169,32 @@ function renderBaseSelect(trip) {
 }
 
 function renderCurrencyPills(trip, currencies) {
-  $("#currencyPills").innerHTML = currencies.map((c) => {
+  const wrap = $("#currencyPills");
+  wrap.innerHTML = currencies.map((c) => {
     const isBase = c === trip.base_currency;
     return `<span class="pill ${isBase ? "pill--base" : ""}">
-      ${CURRENCIES[c]?.flag || ""} ${c}${isBase ? " · 基準" : ""}
+      <span>${CURRENCIES[c]?.flag || ""} ${c}${isBase ? " · 基準" : ""}</span>
+      <span class="rate" data-rate="${c}">${isBase ? "1.0000" : "…"}</span>
       ${isBase ? "" : `<button class="pill-x" data-remove="${c}" title="移除">×</button>`}
     </span>`;
   }).join("");
-  $("#currencyPills").querySelectorAll(".pill-x").forEach((b) => {
+  wrap.querySelectorAll(".pill-x").forEach((b) => {
     b.onclick = async () => {
       try { await removeTripCurrency(trip.id, b.dataset.remove); renderTrip(trip); }
       catch (err) { alert(humanError(err)); }
     };
+  });
+
+  // 即時匯率：顯示 1 單位該幣別 ≈ 多少基準幣別
+  getRates(trip.base_currency).then((rates) => {
+    wrap.querySelectorAll(".rate[data-rate]").forEach((el) => {
+      const c = el.dataset.rate;
+      if (c === trip.base_currency) { el.textContent = `1 ${c}`; return; }
+      const r = rateToBase(c, rates, trip.base_currency);
+      el.textContent = r ? `1${c}≈${r.toFixed(r < 0.01 ? 6 : 4)}${trip.base_currency}` : "—";
+    });
+  }).catch(() => {
+    wrap.querySelectorAll(".rate[data-rate]").forEach((el) => { el.textContent = ""; });
   });
 }
 
@@ -178,7 +202,7 @@ function renderAddCurrency(trip, currencies) {
   const avail = CURRENCY_CODES.filter((c) => !currencies.includes(c));
   const sel = $("#addCurrencySelect");
   sel.innerHTML = avail.length
-    ? avail.map((c) => `<option value="${c}">${CURRENCIES[c].flag} ${c} ${CURRENCIES[c].name}</option>`).join("")
+    ? avail.map((c) => `<option value="${c}">${currencyLabel(c)}</option>`).join("")
     : `<option value="">已全部啟用</option>`;
   $("#addCurrencyBtn").disabled = !avail.length;
   $("#addCurrencyBtn").onclick = async () => {
@@ -186,6 +210,156 @@ function renderAddCurrency(trip, currencies) {
     try { await addTripCurrency(trip.id, sel.value); renderTrip(trip); }
     catch (err) { alert(humanError(err)); }
   };
+}
+
+// ---------- 行程項目 ----------
+const CATEGORY_ICON = { 景點:"📍", 餐廳:"🍜", 交通:"🚆", 住宿:"🏨", 購物:"🛍️", 其他:"✨" };
+
+function dayLabel(d) {
+  if (!d) return "未排定";
+  const wd = ["日","一","二","三","四","五","六"][new Date(d + "T00:00:00").getDay()];
+  return `${d.slice(5)}（${wd}）`;
+}
+
+async function renderItinerary(trip) {
+  const items = await listItems(trip.id);
+
+  // 依日期分組
+  const groups = new Map();
+  for (const it of items) {
+    const key = it.day_date || "";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(it);
+  }
+  const dayKeys = [...groups.keys()].sort((a, b) => (a === "" ? 1 : b === "" ? -1 : a < b ? -1 : 1));
+
+  // 日期分頁
+  const tabs = $("#dayTabs");
+  if (dayKeys.length > 1) {
+    if (!state.activeDay || !dayKeys.includes(state.activeDay)) state.activeDay = dayKeys[0];
+    tabs.innerHTML = dayKeys.map((k) =>
+      `<button class="day-tab ${k === state.activeDay ? "is-active" : ""}" data-day="${k}">${dayLabel(k)}<small>${groups.get(k).length}</small></button>`
+    ).join("");
+    tabs.querySelectorAll(".day-tab").forEach((b) => {
+      b.onclick = () => { state.activeDay = b.dataset.day; renderItinerary(trip); };
+    });
+    tabs.hidden = false;
+  } else {
+    tabs.hidden = true;
+    state.activeDay = dayKeys[0] ?? null;
+  }
+
+  // 清單（只顯示目前選的日期；若只有一組則全顯示）
+  const showKeys = dayKeys.length > 1 ? [state.activeDay] : dayKeys;
+  const list = $("#itineraryList");
+  if (!items.length) {
+    list.innerHTML = `<p class="status">還沒有任何項目，點右上角「＋ 新增項目」開始排行程。</p>`;
+    return;
+  }
+  list.innerHTML = showKeys.map((k) => `
+    ${dayKeys.length > 1 ? "" : `<h3 class="day-head">${dayLabel(k)}</h3>`}
+    ${groups.get(k).map(renderItemCard).join("")}
+  `).join("");
+
+  // 綁定每張卡片的按鈕
+  list.querySelectorAll("[data-map]").forEach((b) =>
+    (b.onclick = () => setMap(b.dataset.map)));
+  list.querySelectorAll("[data-edit]").forEach((b) =>
+    (b.onclick = () => openItemModal(items.find((i) => i.id === b.dataset.edit))));
+}
+
+function renderItemCard(it) {
+  const time = it.start_time
+    ? it.start_time.slice(0, 5) + (it.end_time ? "–" + it.end_time.slice(0, 5) : "")
+    : "";
+  const q = it.map_query || it.location_name || it.title;
+  return `
+    <div class="itin-item">
+      <div class="itin-time">${time || "·"}</div>
+      <div class="itin-body">
+        <div class="itin-title">${CATEGORY_ICON[it.category] || "•"} ${escapeHtml(it.title)}
+          ${it.category ? `<span class="tag">${it.category}</span>` : ""}</div>
+        ${it.location_name ? `<div class="status">📍 ${escapeHtml(it.location_name)}</div>` : ""}
+        ${it.notes ? `<div class="itin-notes">${escapeHtml(it.notes)}</div>` : ""}
+      </div>
+      <div class="itin-actions">
+        ${q ? `<button class="btn btn--ghost btn--sm" data-map="${escapeAttr(q)}">地圖</button>` : ""}
+        <button class="btn btn--ghost btn--sm" data-edit="${it.id}">編輯</button>
+      </div>
+    </div>`;
+}
+
+// ---------- 地圖 ----------
+function setMap(query) {
+  const enc = encodeURIComponent(query);
+  $("#mapFrame").src = `https://www.google.com/maps?q=${enc}&output=embed`;
+  $("#mapOpen").href = `https://www.google.com/maps/search/?api=1&query=${enc}`;
+  $("#mapTitle").textContent = query;
+  $("#mapFrame").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+// ---------- 項目 Modal ----------
+function openItemModal(item) {
+  const f = $("#itemForm");
+  f.reset();
+  $("#itemError").hidden = true;
+  const editing = !!item;
+  $("#itemModalTitle").textContent = editing ? "編輯項目" : "新增項目";
+  $("#itemDeleteBtn").hidden = !editing;
+  f.id.value = item?.id || "";
+  if (item) {
+    f.title.value = item.title || "";
+    f.day_date.value = item.day_date || "";
+    f.category.value = item.category || "景點";
+    f.start_time.value = item.start_time ? item.start_time.slice(0, 5) : "";
+    f.end_time.value = item.end_time ? item.end_time.slice(0, 5) : "";
+    f.location_name.value = item.location_name || "";
+    f.notes.value = item.notes || "";
+  } else {
+    // 預設日期：目前選的日期，或行程出發日
+    f.day_date.value = (state.activeDay && state.activeDay !== "") ? state.activeDay
+      : (state.trip?.start_date || "");
+  }
+  $("#itemModal").hidden = false;
+}
+
+function closeItemModal() { $("#itemModal").hidden = true; }
+
+async function onItemSubmit(e) {
+  e.preventDefault();
+  const f = e.target;
+  const payload = {
+    title: f.title.value.trim(),
+    day_date: f.day_date.value || null,
+    category: f.category.value,
+    start_time: f.start_time.value || null,
+    end_time: f.end_time.value || null,
+    location_name: f.location_name.value.trim() || null,
+    notes: f.notes.value.trim() || null,
+  };
+  if (!payload.title) return;
+  payload.map_query = payload.location_name || payload.title;
+  try {
+    setBusy(f, true);
+    if (f.id.value) await updateItem(f.id.value, payload);
+    else await addItem(state.trip.id, payload, state.me?.id);
+    closeItemModal();
+    await renderItinerary(state.trip);
+  } catch (err) {
+    const el = $("#itemError"); el.textContent = humanError(err); el.hidden = false;
+  } finally {
+    setBusy(f, false);
+  }
+}
+
+async function onItemDelete() {
+  const id = $("#itemForm").id.value;
+  if (!id || !confirm("確定刪除這個項目？")) return;
+  try {
+    await deleteItem(id);
+    closeItemModal();
+    await renderItinerary(state.trip);
+  } catch (err) { alert(humanError(err)); }
 }
 
 // ---------- 共用 ----------
@@ -196,6 +370,7 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
+function escapeAttr(s) { return escapeHtml(s); }
 function humanError(err) {
   const m = err?.message || String(err);
   if (/not found/i.test(m)) return "找不到這個行程碼，請確認後再試。";
@@ -219,6 +394,15 @@ async function boot() {
     $("#copyCode").textContent = "已複製";
     setTimeout(() => ($("#copyCode").textContent = "複製"), 1500);
   };
+
+  // 行程項目 modal
+  $("#addItemBtn").onclick = () => openItemModal(null);
+  $("#itemModalClose").onclick = closeItemModal;
+  $("#itemForm").addEventListener("submit", onItemSubmit);
+  $("#itemDeleteBtn").onclick = onItemDelete;
+  $("#itemModal").addEventListener("click", (e) => {
+    if (e.target.id === "itemModal") closeItemModal(); // 點背景關閉
+  });
 
   try {
     await ensureAuth();
