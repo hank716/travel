@@ -144,6 +144,9 @@ async function enterTrip(tripId) {
   state.trip = trip;
   state.me = await getMyMember(tripId);
   state.mapInit = false;   // 進新行程時重設地圖預設
+  const frame = $("#mapFrame");
+  frame.hidden = true; frame.removeAttribute("src");
+  $("#mapTitle").textContent = "點行程項目的「地圖」即可在此顯示";
   await renderTrip(trip);
   await renderItinerary(trip);
   show("appView");
@@ -284,16 +287,10 @@ async function renderItinerary(trip) {
 
   // 清單（只顯示目前選的日期；若只有一組則全顯示）
   const showKeys = dayKeys.length > 1 ? [state.activeDay] : dayKeys;
-  // 首次進入時把地圖預設到第一個有地點的項目（讓「開啟 Google Maps」一開始就有效）
-  if (!state.mapInit) {
-    const first = items.find((i) => i.map_query || i.location_name);
-    setMap(first ? (first.map_query || first.location_name) : (trip.title || "Japan"), { silent: true });
-    state.mapInit = true;
-  }
-
   const list = $("#itineraryList");
   if (!items.length) {
     list.innerHTML = `<p class="status">還沒有任何項目，點右上角「＋ 新增項目」開始排行程。</p>`;
+    $("#mapOpen").href = buildMapUrl([]);
     return;
   }
   list.innerHTML = showKeys.map((k) => `
@@ -303,9 +300,19 @@ async function renderItinerary(trip) {
 
   // 綁定每張卡片的按鈕
   list.querySelectorAll("[data-map]").forEach((b) =>
-    (b.onclick = () => setMap(b.dataset.map)));
+    (b.onclick = () => previewMap(b.dataset.map)));
   list.querySelectorAll("[data-edit]").forEach((b) =>
     (b.onclick = () => openItemModal(items.find((i) => i.id === b.dataset.edit))));
+
+  // 「在 Google Maps 開啟」= 目前顯示日期的整條行程路線
+  const shownItems = showKeys.flatMap((k) => groups.get(k) || []);
+  $("#mapOpen").href = buildMapUrl(shownItems);
+
+  // 首次進入時，內嵌地圖預覽第一個有地點的項目（無地點則維持空白提示）
+  if (!state.mapInit) {
+    const first = items.find((i) => i.map_query || i.location_name);
+    if (first) { previewMap(first.map_query || first.location_name, { silent: true }); state.mapInit = true; }
+  }
 }
 
 function renderItemCard(it) {
@@ -330,12 +337,23 @@ function renderItemCard(it) {
 }
 
 // ---------- 地圖 ----------
-function setMap(query, { silent = false } = {}) {
+// 單點預覽（內嵌 iframe），不影響「在 Google Maps 開啟」的整條路線連結
+function previewMap(query, { silent = false } = {}) {
   const enc = encodeURIComponent(query);
-  $("#mapFrame").src = `https://www.google.com/maps?q=${enc}&output=embed`;
-  $("#mapOpen").href = `https://www.google.com/maps/search/?api=1&query=${enc}`;
+  const frame = $("#mapFrame");
+  frame.hidden = false;
+  frame.src = `https://www.google.com/maps?q=${enc}&output=embed`;
   $("#mapTitle").textContent = query;
-  if (!silent) $("#mapFrame").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  if (!silent) frame.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+// 由項目清單組出 Google Maps 連結：多點→路線(dir)、單點→搜尋、無點→Google Maps 首頁
+function buildMapUrl(items) {
+  const pts = items.map((i) => i.map_query || i.location_name).filter(Boolean);
+  if (pts.length === 0) return "https://www.google.com/maps";
+  if (pts.length === 1)
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(pts[0])}`;
+  return "https://www.google.com/maps/dir/" + pts.map(encodeURIComponent).join("/");
 }
 
 // ---------- 項目 Modal ----------
