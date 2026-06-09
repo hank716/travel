@@ -13,7 +13,9 @@ const CORS = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const GEMINI_MODEL = "gemini-2.0-flash";
+// 主模型 + 備援；遇 503/429 會重試與切換
+const GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"];
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -24,22 +26,33 @@ function json(body: unknown, status = 200) {
 async function gemini(prompt: string): Promise<string> {
   const key = Deno.env.get("GEMINI_API_KEY");
   if (!key) throw new Error("尚未設定 GEMINI_API_KEY");
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${key}`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.7, maxOutputTokens: 800 },
-    }),
+  const body = JSON.stringify({
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    generationConfig: { temperature: 0.7, maxOutputTokens: 800 },
   });
-  if (!res.ok) {
-    const t = await res.text();
-    throw new Error(`Gemini ${res.status}: ${t.slice(0, 300)}`);
+
+  let lastErr = "";
+  for (const model of GEMINI_MODELS) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+      const res = await fetch(url, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return (data?.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text).join("") ?? "").trim();
+      }
+      const t = await res.text();
+      lastErr = `${res.status}: ${t.slice(0, 160)}`;
+      if (res.status === 404) break;                 // 模型不存在 → 換下一個
+      if (res.status === 503 || res.status === 429) { // 壅塞/限流 → 退避重試
+        await sleep(1200 * (attempt + 1));
+        continue;
+      }
+      throw new Error(`Gemini ${lastErr}`);            // 其他錯誤直接拋
+    }
   }
-  const data = await res.json();
-  const text = data?.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text).join("") ?? "";
-  return text.trim();
+  throw new Error(`Gemini 暫時無法使用，請稍後再試（${lastErr}）`);
 }
 
 function weatherPrompt(payload: Record<string, unknown>): string {
