@@ -17,6 +17,7 @@ const { DEFAULT_BASE_CURRENCY, DEFAULT_CURRENCIES } = window.APP_CONFIG;
 
 let unsub = null;       // 行程/成員 realtime 取消訂閱
 let unsubItin = null;   // 行程項目 realtime 取消訂閱
+let createCurrencies = new Set(); // 建立行程時已選的幣別
 const state = { trip: null, me: null, activeDay: null };
 
 // ---------- 視圖切換 ----------
@@ -48,14 +49,44 @@ function buildJoinView() {
   baseSel.innerHTML = CURRENCY_CODES.map(
     (c) => `<option value="${c}" ${c === DEFAULT_BASE_CURRENCY ? "selected" : ""}>${currencyLabel(c)}</option>`
   ).join("");
+  baseSel.onchange = () => renderCreateCurrencyPicker(); // 基準改了，chip 標記跟著更新
 
-  // 啟用幣別多選（全世界，預設勾選 DEFAULT_CURRENCIES）
-  $("#createCurrencies").innerHTML = CURRENCY_CODES.map(
-    (c) => `<option value="${c}" ${DEFAULT_CURRENCIES.includes(c) ? "selected" : ""}>${currencyLabel(c)}</option>`
-  ).join("");
+  // 啟用幣別：可點選的 chip（手機友善），預設帶入 DEFAULT_CURRENCIES
+  createCurrencies = new Set(DEFAULT_CURRENCIES);
+  renderCreateCurrencyPicker();
+  $("#createAddCurrencyBtn").onclick = () => {
+    const v = $("#createAddCurrency").value;
+    if (v) { createCurrencies.add(v); renderCreateCurrencyPicker(); }
+  };
 
   $("#joinForm").addEventListener("submit", onJoinSubmit);
   $("#createForm").addEventListener("submit", onCreateSubmit);
+}
+
+// 建立行程的幣別 chip 選擇器（點 chip 移除、下拉新增）
+function renderCreateCurrencyPicker() {
+  const base = $('#createForm select[name="base"]').value;
+  const chips = $("#createCurrencyChips");
+  const codes = [...createCurrencies];
+  chips.innerHTML = codes.length
+    ? codes.map((c) => {
+        const isBase = c === base;
+        return `<span class="pill ${isBase ? "pill--base" : ""}">
+          <span>${CURRENCIES[c]?.flag || ""} ${c}${isBase ? " · 基準" : ""}</span>
+          ${isBase ? "" : `<button class="pill-x" type="button" data-cc-remove="${c}">×</button>`}
+        </span>`;
+      }).join("")
+    : `<span class="status">尚未選擇</span>`;
+  chips.querySelectorAll("[data-cc-remove]").forEach((b) => {
+    b.onclick = () => { createCurrencies.delete(b.dataset.ccRemove); renderCreateCurrencyPicker(); };
+  });
+
+  const avail = CURRENCY_CODES.filter((c) => !createCurrencies.has(c));
+  const sel = $("#createAddCurrency");
+  sel.innerHTML = avail.length
+    ? avail.map((c) => `<option value="${c}">${currencyLabel(c)}</option>`).join("")
+    : `<option value="">已全部加入</option>`;
+  $("#createAddCurrencyBtn").disabled = !avail.length;
 }
 
 async function onJoinSubmit(e) {
@@ -81,7 +112,7 @@ async function onCreateSubmit(e) {
   e.preventDefault();
   showError("");
   const f = e.target;
-  const currencies = [...$("#createCurrencies").selectedOptions].map((o) => o.value);
+  const currencies = [...createCurrencies];
   const base = f.base.value;
   if (!currencies.includes(base)) currencies.push(base); // 基準幣別一定要啟用
   try {

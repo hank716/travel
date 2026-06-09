@@ -57,9 +57,13 @@
           <label>結算基準幣別
             <select name="base"></select>
           </label>
-          <label>啟用幣別（可複選，之後仍可增減）
-            <select id="createCurrencies" multiple size="6"></select>
-            <small class="status">按住 Ctrl／⌘ 可多選。基準幣別會自動納入。</small>
+          <label>啟用幣別（點選加入／移除，之後仍可改）
+            <div id="createCurrencyChips" class="chip-pick"></div>
+            <div class="add-currency">
+              <select id="createAddCurrency" class="inline-select"></select>
+              <button id="createAddCurrencyBtn" class="btn btn--ghost btn--sm" type="button">＋ 加入</button>
+            </div>
+            <small class="status">基準幣別會自動納入。</small>
           </label>
           <label>你的名字
             <input name="name" placeholder="小明" maxlength="20" required />
