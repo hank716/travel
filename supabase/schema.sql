@@ -86,6 +86,7 @@ create table if not exists public.members (
   display_name text not null,
   color        text not null default '#E66F4B',
   is_admin     boolean not null default false,        -- 建立者為管理員，可管理名單
+  can_edit     boolean not null default true,          -- 可編輯 / 唯讀（唯讀者只能看不能改）
   created_at   timestamptz not null default now(),
   unique (trip_id, auth_uid)
 );
@@ -94,6 +95,8 @@ create table if not exists public.members (
 alter table public.members alter column auth_uid drop not null;
 alter table public.members alter column auth_uid drop default;
 alter table public.members add column if not exists is_admin boolean not null default false;
+-- 權限分級：可編輯 / 唯讀（既有成員預設可編輯，不影響現狀）
+alter table public.members add column if not exists can_edit boolean not null default true;
 -- 天氣用：快取每個項目解析到的行政區（避免重複呼叫 AI）
 alter table public.itinerary_items add column if not exists weather_area text;
 
@@ -135,6 +138,22 @@ create table if not exists public.expense_splits (
   share_amount numeric not null check (share_amount >= 0)   -- 原幣，攤多少
 );
 
+-- 行李清單：弱連結行程(trip_id)與成員(member_id)。member_id 為 null = 共用/全體；
+-- 刪某成員時其行李改為共用（on delete set null），資料不消失。不引用行程/天氣表。
+create table if not exists public.packing_items (
+  id         uuid primary key default gen_random_uuid(),
+  trip_id    uuid not null references public.trips(id) on delete cascade,
+  member_id  uuid references public.members(id) on delete set null,  -- null = 共用/全體
+  name       text not null,
+  category   text,                                  -- 衣物/證件/電子/盥洗/藥品/其他
+  qty        int not null default 1,
+  checked    boolean not null default false,        -- 已打包
+  note       text,                                  -- AI 建議原因等
+  sort_order int not null default 0,
+  created_by uuid references public.members(id) on delete set null,
+  created_at timestamptz not null default now()
+);
+
 -- 匯率每日快取（公開資料，所有登入者可讀寫，少打外部 API）
 create table if not exists public.fx_cache (
   date  date not null,
@@ -147,6 +166,7 @@ create index if not exists idx_members_trip       on public.members(trip_id);
 create index if not exists idx_itinerary_trip      on public.itinerary_items(trip_id);
 create index if not exists idx_expenses_trip       on public.expenses(trip_id);
 create index if not exists idx_splits_expense      on public.expense_splits(expense_id);
+create index if not exists idx_packing_trip        on public.packing_items(trip_id);
 
 -- -----------------------------------------------------------------------------
 -- 輔助函式
@@ -163,6 +183,22 @@ as $$
   select exists (
     select 1 from public.members m
     where m.trip_id = p_trip_id and m.auth_uid = auth.uid()
+  );
+$$;
+
+-- 目前登入者是否為某行程「可編輯」的成員（成員 且 (can_edit 或 is_admin)）。
+-- 唯讀成員 → false；行程管理員一律可編輯。寫入類 RLS 用這個把關。
+create or replace function public.is_trip_editor(p_trip_id uuid)
+returns boolean
+language sql
+security definer
+stable
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.members m
+    where m.trip_id = p_trip_id and m.auth_uid = auth.uid()
+      and (m.can_edit or m.is_admin)
   );
 $$;
 
@@ -187,9 +223,12 @@ begin
 end;
 $$;
 
--- 建立新行程 + 把建立者加為第一個成員。可帶自訂行程碼 p_code（留空自動產生）。
--- 注意：新增了 p_code 參數 → 是新的函式簽章，需先 drop 舊版避免重載衝突。
+-- 建立新行程。p_join = true（預設）→ 把建立者加為第一個成員(管理員)；
+-- p_join = false → 建立者不參加（不進名單、不分帳），之後由後台指派家人並指定行程管理員。
+-- 可帶自訂行程碼 p_code（留空自動產生）。
+-- 注意：新增參數 → 是新的函式簽章，需先 drop 舊版避免重載衝突。
 drop function if exists public.create_trip(text, date, date, text, text[], text, text);
+drop function if exists public.create_trip(text, date, date, text, text[], text, text, text);
 
 create or replace function public.create_trip(
   p_title      text,
@@ -199,7 +238,8 @@ create or replace function public.create_trip(
   p_currencies text[],
   p_name       text,
   p_color      text default '#E66F4B',
-  p_code       text default null
+  p_code       text default null,
+  p_join       boolean default true
 )
 returns public.trips
 language plpgsql
@@ -241,9 +281,11 @@ begin
     on conflict do nothing;
   end loop;
 
-  -- 建立者即管理員
-  insert into public.members (trip_id, auth_uid, display_name, color, is_admin)
-  values (v_trip.id, auth.uid(), coalesce(nullif(trim(p_name), ''), '我'), coalesce(p_color, '#E66F4B'), true);
+  -- p_join = true：建立者即行程管理員（可編輯）；false：建立者不參加（不進名單）。
+  if p_join then
+    insert into public.members (trip_id, auth_uid, display_name, color, is_admin, can_edit)
+    values (v_trip.id, auth.uid(), coalesce(nullif(trim(p_name), ''), '我'), coalesce(p_color, '#E66F4B'), true, true);
+  end if;
 
   return v_trip;
 end;
@@ -348,6 +390,54 @@ begin
 end;
 $$;
 
+-- 指定某成員為行程管理員（單一管理員：同行程其他人取消 is_admin）。
+-- 授權：全域 admin 或該行程現任管理員。供 admin 不參加時把一位家人升為管理員。
+create or replace function public.set_trip_admin(p_trip_id uuid, p_member_id uuid)
+returns public.members
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_member public.members;
+begin
+  if not (public.is_admin() or public.is_trip_admin(p_trip_id)) then
+    raise exception 'admin only';
+  end if;
+  if not exists (select 1 from public.members m where m.id = p_member_id and m.trip_id = p_trip_id) then
+    raise exception 'member not in trip';
+  end if;
+  update public.members set is_admin = false where trip_id = p_trip_id;
+  update public.members set is_admin = true, can_edit = true
+   where id = p_member_id returning * into v_member;
+  return v_member;
+end;
+$$;
+
+-- 設定某成員為可編輯 / 唯讀。授權：全域 admin 或該成員所屬行程的管理員。
+create or replace function public.set_member_can_edit(p_member_id uuid, p_can_edit boolean)
+returns public.members
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_member public.members;
+  v_trip   uuid;
+begin
+  select trip_id into v_trip from public.members where id = p_member_id;
+  if v_trip is null then
+    raise exception 'member not found';
+  end if;
+  if not (public.is_admin() or public.is_trip_admin(v_trip)) then
+    raise exception 'admin only';
+  end if;
+  update public.members set can_edit = coalesce(p_can_edit, true)
+   where id = p_member_id returning * into v_member;
+  return v_member;
+end;
+$$;
+
 -- 用行程碼取得名單（登入畫面挑名字用；免先成為成員）
 create or replace function public.get_roster(p_code text)
 returns table (display_name text, color text, claimed boolean, is_admin boolean)
@@ -373,6 +463,7 @@ alter table public.members         enable row level security;
 alter table public.itinerary_items enable row level security;
 alter table public.expenses        enable row level security;
 alter table public.expense_splits  enable row level security;
+alter table public.packing_items   enable row level security;
 alter table public.fx_cache        enable row level security;
 
 -- profiles：本人可讀自己；管理員可讀全部（列成員帳號用）。
@@ -380,26 +471,30 @@ drop policy if exists profiles_self on public.profiles;
 create policy profiles_self on public.profiles for select
   using (id = auth.uid() or public.is_admin());
 
--- trips：成員可讀、可改設定（base/title 等）；建立走 RPC，不開放直接 INSERT。
+-- trips：成員可讀；全域 admin 唯讀可視（即使不參加也看得到）；可編輯成員可改設定；
+-- 建立走 RPC，不開放直接 INSERT。
 drop policy if exists trips_select on public.trips;
 create policy trips_select on public.trips for select
-  using (public.is_trip_member(id));
+  using (public.is_trip_member(id) or public.is_admin());
 drop policy if exists trips_update on public.trips;
 create policy trips_update on public.trips for update
-  using (public.is_trip_member(id)) with check (public.is_trip_member(id));
+  using (public.is_trip_editor(id)) with check (public.is_trip_editor(id));
 drop policy if exists trips_delete on public.trips;
 create policy trips_delete on public.trips for delete
   using (public.is_admin());           -- 僅管理員可刪除整趟（cascade 連帶清掉項目/記帳）
 
--- trip_currencies：成員可讀寫（讓使用者自由增減幣別）。
+-- trip_currencies：成員/admin 可讀；可編輯成員可增減幣別。
+drop policy if exists tc_select on public.trip_currencies;
+create policy tc_select on public.trip_currencies for select
+  using (public.is_trip_member(trip_id) or public.is_admin());
 drop policy if exists tc_all on public.trip_currencies;
 create policy tc_all on public.trip_currencies for all
-  using (public.is_trip_member(trip_id)) with check (public.is_trip_member(trip_id));
+  using (public.is_trip_editor(trip_id)) with check (public.is_trip_editor(trip_id));
 
--- members：同行程成員可讀；只能改/刪自己的列；加入走 RPC。
+-- members：同行程成員/admin 可讀；只能改/刪自己的列；加入走 RPC。
 drop policy if exists members_select on public.members;
 create policy members_select on public.members for select
-  using (public.is_trip_member(trip_id));
+  using (public.is_trip_member(trip_id) or public.is_admin());
 drop policy if exists members_update_own on public.members;
 create policy members_update_own on public.members for update
   using (auth_uid = auth.uid()) with check (auth_uid = auth.uid());
@@ -414,22 +509,40 @@ drop policy if exists members_admin_delete on public.members;
 create policy members_admin_delete on public.members for delete
   using (public.is_trip_admin(trip_id));
 
--- itinerary / expenses：成員對該行程完整讀寫。
+-- itinerary / expenses：成員/admin 可讀；可編輯成員可寫。
+drop policy if exists itinerary_select on public.itinerary_items;
+create policy itinerary_select on public.itinerary_items for select
+  using (public.is_trip_member(trip_id) or public.is_admin());
 drop policy if exists itinerary_all on public.itinerary_items;
 create policy itinerary_all on public.itinerary_items for all
-  using (public.is_trip_member(trip_id)) with check (public.is_trip_member(trip_id));
+  using (public.is_trip_editor(trip_id)) with check (public.is_trip_editor(trip_id));
 
+drop policy if exists expenses_select on public.expenses;
+create policy expenses_select on public.expenses for select
+  using (public.is_trip_member(trip_id) or public.is_admin());
 drop policy if exists expenses_all on public.expenses;
 create policy expenses_all on public.expenses for all
-  using (public.is_trip_member(trip_id)) with check (public.is_trip_member(trip_id));
+  using (public.is_trip_editor(trip_id)) with check (public.is_trip_editor(trip_id));
 
--- expense_splits：依母 expense 的行程判斷。
+-- expense_splits：依母 expense 的行程判斷（讀：成員/admin；寫：可編輯成員）。
+drop policy if exists splits_select on public.expense_splits;
+create policy splits_select on public.expense_splits for select
+  using (exists (select 1 from public.expenses e
+                 where e.id = expense_id and (public.is_trip_member(e.trip_id) or public.is_admin())));
 drop policy if exists splits_all on public.expense_splits;
 create policy splits_all on public.expense_splits for all
   using (exists (select 1 from public.expenses e
-                 where e.id = expense_id and public.is_trip_member(e.trip_id)))
+                 where e.id = expense_id and public.is_trip_editor(e.trip_id)))
   with check (exists (select 1 from public.expenses e
-                 where e.id = expense_id and public.is_trip_member(e.trip_id)));
+                 where e.id = expense_id and public.is_trip_editor(e.trip_id)));
+
+-- packing_items：成員/admin 可讀；可編輯成員可寫。
+drop policy if exists packing_select on public.packing_items;
+create policy packing_select on public.packing_items for select
+  using (public.is_trip_member(trip_id) or public.is_admin());
+drop policy if exists packing_all on public.packing_items;
+create policy packing_all on public.packing_items for all
+  using (public.is_trip_editor(trip_id)) with check (public.is_trip_editor(trip_id));
 
 -- fx_cache：所有登入者可讀寫（純快取，非機密）。
 drop policy if exists fx_select on public.fx_cache;
@@ -449,5 +562,13 @@ begin
   alter publication supabase_realtime add table public.expenses;
   alter publication supabase_realtime add table public.expense_splits;
   alter publication supabase_realtime add table public.trip_currencies;
+exception when duplicate_object then null;
+end $$;
+
+-- packing_items 獨立一個區塊：避免上面任一 add 先丟 duplicate_object 後，整個區塊提早結束
+-- 導致 packing_items 在既有 DB 重跑時被略過。
+do $$
+begin
+  alter publication supabase_realtime add table public.packing_items;
 exception when duplicate_object then null;
 end $$;

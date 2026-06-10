@@ -10,6 +10,9 @@ import {
 import {
   listExpenses, addExpense, updateExpense, deleteExpense, subscribeExpenses,
 } from "./expenses.js";
+import {
+  listPacking, addPacking, updatePacking, deletePacking, subscribePacking,
+} from "./packing.js";
 import { computeBalances, currencyTotals, settleUp, splitEqually } from "./settle.js";
 import { loadItineraryWeather, loadCityWeather, getWeatherSummaries } from "./weather.js";
 import { callAI } from "./ai.js";
@@ -19,6 +22,7 @@ import {
   listMembers, getTripCurrencies, addTripCurrency, removeTripCurrency,
   updateBaseCurrency, subscribeTrip, listMyTrips, deleteTrip,
   provisionMember, removeMember, updateTrip, adminAction,
+  setTripAdmin, setMemberCanEdit,
 } from "./trip.js";
 
 const $ = (s) => document.querySelector(s);
@@ -31,6 +35,7 @@ const { DEFAULT_BASE_CURRENCY, DEFAULT_CURRENCIES } = window.APP_CONFIG;
 let unsub = null;       // 行程/成員 realtime 取消訂閱
 let unsubItin = null;   // 行程項目 realtime 取消訂閱
 let unsubExp = null;    // 記帳 realtime 取消訂閱
+let unsubPacking = null; // 行李 realtime 取消訂閱
 let createCurrencies = new Set(); // 建立行程時已選的幣別
 let adminTrips = [];              // 管理頁目前的行程清單（指派行程彈窗用）
 const state = {
@@ -39,9 +44,17 @@ const state = {
   profile: null, // 登入者 profile（含 is_admin）
 };
 const isAdmin = () => !!state.profile?.is_admin;
+// 目前使用者能否編輯這趟（成員且可編輯，或行程管理員）。非成員（如全域 admin 旁觀）= 唯讀。
+const canEdit = () => !!(state.me && (state.me.can_edit || state.me.is_admin));
+// 寫入動作前的守門：唯讀就提示並擋下
+function guardEdit() {
+  if (canEdit()) return true;
+  toast("你是唯讀成員，無法編輯", false);
+  return false;
+}
 
 // ---------- 分頁路由（桌機側欄 + 手機底部分頁列共用 data-page）----------
-const PAGES = ["overview", "itinerary", "expenses", "weather", "admin"];
+const PAGES = ["overview", "itinerary", "expenses", "weather", "packing", "admin"];
 
 function showPage(name) {
   if (!PAGES.includes(name)) name = "overview";
@@ -52,6 +65,7 @@ function showPage(name) {
   if (location.hash.slice(1) !== name) history.replaceState(null, "", "#" + name);
   closePopovers();
   if (name === "weather") ensureWeather();
+  if (name === "packing") renderPacking(state.trip).catch(console.error);
   if (name === "admin") renderAdmin();
 }
 
@@ -208,6 +222,8 @@ async function onCreateSubmit(e) {
   const currencies = [...createCurrencies];
   const base = f.base.value;
   if (!currencies.includes(base)) currencies.push(base); // 基準幣別一定要啟用
+  const join = $("#tripJoinSelf") ? $("#tripJoinSelf").checked : true;
+  if (join && !f.name.value.trim()) { showError("請填你的名字（管理員），或取消「我要一起參加」。"); return; }
   try {
     setBusy(f, true);
     const trip = await createTrip({
@@ -219,10 +235,17 @@ async function onCreateSubmit(e) {
       name: f.name.value.trim(),
       color: pickColor(),
       code: null, // 行程碼已不對外使用；交由後端自動產生內部碼
+      join,
     });
     saveTrip(trip);
     closeTripModal();
-    await enterTrip(trip.id);
+    if (join) {
+      await enterTrip(trip.id);
+    } else {
+      // 自己不參加：不進這趟，回管理頁繼續指派家人
+      toast("已建立行程（你未加入）。請在「指派行程」把家人加進來。");
+      if (!$("#view-admin").hidden) await renderAdmin();
+    }
   } catch (err) {
     showError(humanError(err));
   } finally {
@@ -235,6 +258,7 @@ async function enterTrip(tripId) {
   if (unsub) { unsub(); unsub = null; }
   if (unsubItin) { unsubItin(); unsubItin = null; }
   if (unsubExp) { unsubExp(); unsubExp = null; }
+  if (unsubPacking) { unsubPacking(); unsubPacking = null; }
   const trip = await getTrip(tripId);
   state.trip = trip;
   state.me = await getMyMember(tripId);
@@ -269,6 +293,10 @@ async function enterTrip(tripId) {
     renderExpenses(trip).catch(console.error);
     renderDashboard().catch(() => {});
   });
+  // 即時：行李變動就重畫
+  unsubPacking = subscribePacking(tripId, () => {
+    renderPacking(trip).catch(console.error);
+  });
 }
 
 async function renderTrip(trip) {
@@ -280,22 +308,33 @@ async function renderTrip(trip) {
   state.members = members;
   state.currencies = currencies;
   state.me = me;
-  const isAdmin = !!me?.is_admin;
+  const canManage = !!me?.is_admin;   // 行程管理員可管理名單/權限
 
-  // 成員（管理員可移除；未登入者標示）。新增成員帳號統一在「管理」頁。
+  // 成員（管理員可移除/設權限；未登入者標示）。新增成員帳號統一在「管理」頁。
   setText("#memberCount", `（${members.length} 人）`);
   const memberListEl = $("#memberList");
   if (memberListEl) {
     memberListEl.innerHTML = members.map((m) => {
       const isMe = me && m.id === me.id;
+      const readOnly = !m.is_admin && m.can_edit === false;
+      const roleTag = m.is_admin ? ' <span class="tag">管理員</span>'
+        : readOnly ? ' <span class="tag">唯讀</span>' : "";
+      const manageBtns = (canManage && !isMe) ? `
+        ${m.is_admin ? "" : `<button class="btn btn--ghost btn--sm" type="button" data-set-admin="${m.id}" data-name="${escapeAttr(m.display_name)}">設管理員</button>`}
+        ${m.is_admin ? "" : `<button class="btn btn--ghost btn--sm" type="button" data-toggle-edit="${m.id}" data-can="${m.can_edit === false ? 0 : 1}">${m.can_edit === false ? "設可編輯" : "設唯讀"}</button>`}
+        <button class="pill-x" type="button" data-rm-member="${m.id}" data-name="${escapeAttr(m.display_name)}" title="移除">×</button>` : "";
       return `<div class="member-chip">
         <span class="avatar" style="background:${m.color}">${(m.display_name || "?").slice(0, 1)}</span>
-        <span>${escapeHtml(m.display_name)}${m.is_admin ? ' <span class="tag">管理員</span>' : ""}${isMe ? " <small class='status'>(你)</small>" : ""}${m.auth_uid ? "" : " <small class='status'>未登入</small>"}</span>
-        ${isAdmin && !isMe ? `<button class="pill-x" type="button" data-rm-member="${m.id}" data-name="${escapeAttr(m.display_name)}" title="移除">×</button>` : ""}
+        <span>${escapeHtml(m.display_name)}${roleTag}${isMe ? " <small class='status'>(你)</small>" : ""}${m.auth_uid ? "" : " <small class='status'>未登入</small>"}</span>
+        ${manageBtns}
       </div>`;
     }).join("");
     memberListEl.querySelectorAll("[data-rm-member]").forEach((b) =>
       (b.onclick = () => onRemoveMember(b.dataset.rmMember, b.dataset.name)));
+    memberListEl.querySelectorAll("[data-set-admin]").forEach((b) =>
+      (b.onclick = () => onSetTripAdmin(b.dataset.setAdmin, b.dataset.name)));
+    memberListEl.querySelectorAll("[data-toggle-edit]").forEach((b) =>
+      (b.onclick = () => onToggleCanEdit(b.dataset.toggleEdit, b.dataset.can === "0")));
   }
 
   // 幣別
@@ -303,8 +342,45 @@ async function renderTrip(trip) {
   renderCurrencyPills(trip, currencies);
   renderAddCurrency(trip, currencies);
 
+  // 依編輯權限隱藏/顯示寫入按鈕（唯讀成員只看不改）
+  applyPerms();
+
   // 總覽儀表板（摘要 / 統計 / 接下來的行程）
   renderDashboard().catch(() => {});
+}
+
+// 依目前使用者的編輯權限切換寫入入口的顯示。RLS 才是最終把關，這裡只是體驗層。
+function applyPerms() {
+  const editable = canEdit();
+  document.body.classList.toggle("readonly", !editable);
+  // 各分頁主要寫入按鈕（不存在就略過）
+  ["#addItemBtn", "#aiItinBtn", "#addExpenseBtn", "#addPackingBtn", "#aiPackingBtn"]
+    .forEach((sel) => setHidden(sel, !editable));
+  // 基準幣別下拉：唯讀時停用（保留標籤文字）
+  const baseSel = $("#baseSelect"); if (baseSel) baseSel.disabled = !editable;
+  // 記帳語意輸入列（含輸入框）
+  const nl = $("#nlExpenseInput"); if (nl) { const row = nl.closest(".add-currency"); if (row) row.hidden = !editable; }
+  // 幣別新增列
+  const addCur = $("#addCurrencySelect"); if (addCur) { const row = addCur.closest(".add-currency"); if (row) row.hidden = !editable; }
+}
+
+// 設某成員為行程管理員
+async function onSetTripAdmin(memberId, name) {
+  if (!await confirmDialog({ title: "設為行程管理員", body: `把「${name}」設為這趟的管理員？原管理員會被取消。`, okText: "設定" })) return;
+  try {
+    await setTripAdmin(state.trip.id, memberId);
+    toast("已更新行程管理員");
+    await renderTrip(state.trip);
+  } catch (e) { toast(humanError(e), false); }
+}
+
+// 切換某成員可編輯 / 唯讀
+async function onToggleCanEdit(memberId, canEditNext) {
+  try {
+    await setMemberCanEdit(memberId, canEditNext);
+    toast(canEditNext ? "已設為可編輯" : "已設為唯讀");
+    await renderTrip(state.trip);
+  } catch (e) { toast(humanError(e), false); }
 }
 
 // ---------- 總覽儀表板 ----------
@@ -445,8 +521,15 @@ async function renderAdmin() {
         <div class="admin-row-main">
           <strong>${escapeHtml(u.username || u.email || "?")}</strong>${u.is_admin ? ' <span class="tag">管理員</span>' : ""}
           <span class="status">${escapeHtml(u.email || "")}</span>
-          <div class="admin-trips">${(u.trips || []).map((t) =>
-            `<span class="pill">${escapeHtml(t.title)} ${u.is_admin ? "" : `<button class="pill-x" data-unassign="${u.id}|${t.id}" title="移出">×</button>`}</span>`).join("") || '<span class="status">未指派任何行程</span>'}</div>
+          <div class="admin-trips">${(u.trips || []).map((t) => {
+            const roleTag = t.is_admin ? ' <span class="tag">管理員</span>'
+              : (t.can_edit === false ? ' <span class="tag">唯讀</span>' : '');
+            const ctrls = u.is_admin ? '' : `
+              ${t.is_admin || !t.member_id ? '' : `<button class="btn btn--ghost btn--sm" data-trip-setadmin="${t.id}|${t.member_id}" data-name="${escapeAttr(t.title)}">設管理員</button>`}
+              ${t.is_admin || !t.member_id ? '' : `<button class="btn btn--ghost btn--sm" data-trip-canedit="${t.member_id}|${t.can_edit === false ? 1 : 0}">${t.can_edit === false ? '設可編輯' : '設唯讀'}</button>`}
+              <button class="pill-x" data-unassign="${u.id}|${t.id}" title="移出">×</button>`;
+            return `<span class="pill">${escapeHtml(t.title)}${roleTag} ${ctrls}</span>`;
+          }).join("") || '<span class="status">未指派任何行程</span>'}</div>
         </div>
         <div class="admin-row-actions">
           ${u.is_admin ? "" : `<button class="btn btn--ghost btn--sm" data-assign="${u.id}" data-name="${escapeAttr(u.username || u.email)}">指派行程</button>`}
@@ -459,6 +542,15 @@ async function renderAdmin() {
       const [user_id, trip_id] = b.dataset.unassign.split("|");
       if (!await confirmDialog({ title: "移出行程", body: `把此帳號從「${tripTitle(trip_id)}」移出？`, danger: true, okText: "移出" })) return;
       try { await adminAction("unassign_trip", { user_id, trip_id }); toast("已移出"); await renderAdmin(); } catch (e) { toast(humanError(e), false); }
+    }));
+    uBox.querySelectorAll("[data-trip-setadmin]").forEach((b) => (b.onclick = async () => {
+      const [trip_id, member_id] = b.dataset.tripSetadmin.split("|");
+      if (!await confirmDialog({ title: "設為行程管理員", body: `把此帳號設為「${b.dataset.name}」的管理員？原管理員會被取消。`, okText: "設定" })) return;
+      try { await adminAction("set_trip_admin", { trip_id, member_id }); toast("已設定管理員"); await renderAdmin(); } catch (e) { toast(humanError(e), false); }
+    }));
+    uBox.querySelectorAll("[data-trip-canedit]").forEach((b) => (b.onclick = async () => {
+      const [member_id, canNext] = b.dataset.tripCanedit.split("|");
+      try { await adminAction("set_member_can_edit", { member_id, can_edit: canNext === "1" }); toast(canNext === "1" ? "已設為可編輯" : "已設為唯讀"); await renderAdmin(); } catch (e) { toast(humanError(e), false); }
     }));
     uBox.querySelectorAll("[data-assign]").forEach((b) => (b.onclick = () =>
       openAssignTrip(b.dataset.assign, b.dataset.name)));
@@ -606,6 +698,7 @@ async function onLoggedIn() {
 
 // ---------- AI 建議行程 ----------
 function openAiItin() {
+  if (!guardEdit()) return;
   $("#aiItinOut").innerHTML = "";
   $("#aiItinPrefs").value = "";
   // 規劃範圍：整趟 + 每一天。預設帶入目前正在看的那一天，避免一次蓋掉整趟。
@@ -707,6 +800,7 @@ async function addAllAiItems(sug, btn) {
 
 // ---------- 記帳語意輸入 ----------
 async function onNlExpense() {
+  if (!guardEdit()) return;
   const text = $("#nlExpenseInput").value.trim();
   if (!text) return;
   const btn = $("#nlExpenseBtn"); const old = btn.textContent;
@@ -915,6 +1009,7 @@ function buildMapUrl(items) {
 
 // ---------- 項目 Modal ----------
 function openItemModal(item) {
+  if (!guardEdit()) return;
   const f = $("#itemForm");
   f.reset();
   $("#itemError").hidden = true;
@@ -1061,6 +1156,7 @@ function renderSettlement(expenses, base) {
 
 // ---------- 支出 Modal ----------
 function openExpenseModal(exp) {
+  if (!guardEdit()) return;
   if (!state.members.length) { toast("尚未載入成員，請稍候再試。", false); return; }
   const f = $("#expenseForm");
   f.reset();
@@ -1167,6 +1263,205 @@ async function onExpenseDelete() {
     closeExpenseModal();
     await renderExpenses(state.trip);
   } catch (err) { toast(humanError(err), false); }
+}
+
+// ---------- 行李清單 ----------
+const PACK_ICON = { 衣物: "👕", 證件: "🛂", 電子: "🔌", 盥洗: "🧴", 藥品: "💊", 其他: "✨" };
+
+function fillPackingMemberSelect(sel, selectedId) {
+  if (!sel) return;
+  sel.innerHTML = `<option value="">🧳 共用 / 全體</option>` +
+    state.members.map((m) => `<option value="${m.id}">${escapeHtml(m.display_name)}</option>`).join("");
+  sel.value = selectedId || "";
+}
+
+async function renderPacking(trip) {
+  if (!trip) return;
+  const list = $("#packingList");
+  if (!list) return;
+  const items = await listPacking(trip.id);
+  const editable = canEdit();
+  const total = items.length;
+  const done = items.filter((i) => i.checked).length;
+  setText("#packingProgress", total ? `（已打包 ${done}/${total}）` : "");
+  if (!items.length) {
+    list.innerHTML = `<p class="status">還沒有任何物品，點「＋ 新增物品」或用「✨ AI 建議」開始整理行李。</p>`;
+    return;
+  }
+  // 分組：共用(member_id=null) 優先，其餘依成員順序
+  const memberById = new Map(state.members.map((m) => [m.id, m]));
+  const groups = new Map();
+  for (const it of items) {
+    const key = it.member_id || "shared";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(it);
+  }
+  const order = ["shared", ...state.members.map((m) => m.id)];
+  const keys = order.filter((k) => groups.has(k));
+  for (const k of groups.keys()) if (!keys.includes(k)) keys.push(k);
+
+  list.innerHTML = keys.map((k) => {
+    const g = groups.get(k);
+    const gDone = g.filter((i) => i.checked).length;
+    const label = k === "shared" ? "🧳 共用 / 全體" : escapeHtml(memberById.get(k)?.display_name || "（已移除成員）");
+    return `
+      <div class="pack-group">
+        <h3 class="day-head">${label} <small class="status">${gDone}/${g.length}</small></h3>
+        ${g.map((it) => renderPackingRow(it, editable)).join("")}
+      </div>`;
+  }).join("");
+
+  list.querySelectorAll("[data-pack-check]").forEach((b) =>
+    (b.onchange = () => onTogglePacked(b.dataset.packCheck, b.checked)));
+  list.querySelectorAll("[data-pack-edit]").forEach((b) =>
+    (b.onclick = () => openPackingModal(items.find((i) => i.id === b.dataset.packEdit))));
+}
+
+function renderPackingRow(it, editable) {
+  return `
+    <div class="pack-row ${it.checked ? "is-done" : ""}">
+      <label class="pack-check">
+        <input type="checkbox" data-pack-check="${it.id}" ${it.checked ? "checked" : ""} ${editable ? "" : "disabled"} />
+      </label>
+      <div class="pack-body">
+        <div class="pack-name">${PACK_ICON[it.category] || "•"} ${escapeHtml(it.name)}${it.qty > 1 ? ` <small class="status">×${it.qty}</small>` : ""}${it.category ? ` <span class="tag">${escapeHtml(it.category)}</span>` : ""}</div>
+        ${it.note ? `<div class="itin-notes">${escapeHtml(it.note)}</div>` : ""}
+      </div>
+      ${editable ? `<div class="itin-actions"><button class="btn btn--ghost btn--sm" data-pack-edit="${it.id}">編輯</button></div>` : ""}
+    </div>`;
+}
+
+async function onTogglePacked(id, checked) {
+  if (!canEdit()) { toast("你是唯讀成員，無法編輯", false); renderPacking(state.trip).catch(() => {}); return; }
+  try { await updatePacking(id, { checked }); renderPacking(state.trip).catch(() => {}); }
+  catch (e) { toast(humanError(e), false); renderPacking(state.trip).catch(() => {}); }
+}
+
+function openPackingModal(item) {
+  if (!guardEdit()) return;
+  const f = $("#packingForm");
+  f.reset();
+  $("#packingError").hidden = true;
+  const editing = !!item;
+  $("#packingModalTitle").textContent = editing ? "編輯物品" : "新增物品";
+  $("#packingDeleteBtn").hidden = !editing;
+  f.id.value = item?.id || "";
+  fillPackingMemberSelect($("#packingMember"), item?.member_id || "");
+  f.name.value = item?.name || "";
+  f.category.value = item?.category || "衣物";
+  f.qty.value = item?.qty || 1;
+  $("#packingModal").hidden = false;
+}
+function closePackingModal() { $("#packingModal").hidden = true; }
+
+async function onPackingSubmit(e) {
+  e.preventDefault();
+  const f = e.target;
+  const err = $("#packingError"); err.hidden = true;
+  const payload = {
+    name: f.name.value.trim(),
+    category: f.category.value,
+    qty: Math.max(1, parseInt(f.qty.value, 10) || 1),
+    member_id: $("#packingMember").value || null,
+  };
+  if (!payload.name) return;
+  try {
+    setBusy(f, true);
+    if (f.id.value) await updatePacking(f.id.value, payload);
+    else await addPacking(state.trip.id, payload, state.me?.id);
+    closePackingModal();
+    await renderPacking(state.trip);
+  } catch (e2) { err.textContent = humanError(e2); err.hidden = false; }
+  finally { setBusy(f, false); }
+}
+
+async function onPackingDelete() {
+  const id = $("#packingForm").id.value;
+  if (!id) return;
+  if (!await confirmDialog({ title: "刪除物品", body: "確定刪除這個物品？", danger: true, okText: "刪除" })) return;
+  try { await deletePacking(id); closePackingModal(); await renderPacking(state.trip); }
+  catch (e) { toast(humanError(e), false); }
+}
+
+// ---------- AI 建議行李 ----------
+function openAiPacking() {
+  if (!guardEdit()) return;
+  $("#aiPackingOut").innerHTML = "";
+  $("#aiPackingPrefs").value = "";
+  fillPackingMemberSelect($("#aiPackingMember"), "");
+  $("#aiPackingModal").hidden = false;
+}
+
+async function onAiPackingGo() {
+  const out = $("#aiPackingOut");
+  out.innerHTML = `<p class="status">AI 思考中…（依天氣與行程）</p>`;
+  try {
+    let days = getWeatherSummaries();
+    if (!days.length) { await ensureWeather(true); days = getWeatherSummaries(); }
+    const items = await listItems(state.trip.id);
+    const forId = $("#aiPackingMember").value || "";
+    const forName = forId ? (state.members.find((m) => m.id === forId)?.display_name || "") : "";
+    const { items: raw } = await callAI("suggest_packing", {
+      trip: { title: state.trip.title, start: state.trip.start_date, end: state.trip.end_date },
+      days,
+      itinerary: items.map((i) => i.title).filter(Boolean),
+      preferences: $("#aiPackingPrefs").value.trim(),
+      for_member: forName,
+    });
+    const sug = (Array.isArray(raw) ? raw : []).filter((s) => s && s.name);
+    if (!sug.length) { out.innerHTML = `<p class="status">沒有建議，換個偏好再試。</p>`; return; }
+    out.innerHTML = `
+      <div class="ai-itin-bar">
+        <span class="status">AI 建議 ${sug.length} 項${forName ? "（給 " + escapeHtml(forName) + "）" : "（共用）"}</span>
+        <button class="btn btn--sm" type="button" id="aiPackAddAll">全部加入</button>
+      </div>
+      ${sug.map((s, idx) => `
+      <div class="pack-row">
+        <div class="pack-body">
+          <div class="pack-name">${PACK_ICON[s.category] || "•"} ${escapeHtml(s.name)}${s.qty > 1 ? ` <small class="status">×${s.qty}</small>` : ""} ${s.category ? `<span class="tag">${escapeHtml(s.category)}</span>` : ""}</div>
+          ${s.note ? `<div class="itin-notes">${escapeHtml(s.note)}</div>` : ""}
+        </div>
+        <div class="itin-actions"><button class="btn btn--ghost btn--sm" data-pack-add="${idx}">加入</button></div>
+      </div>`).join("")}`;
+    const forIdFinal = forId || null;
+    $("#aiPackAddAll").onclick = () => addAllPacking(sug, forIdFinal, $("#aiPackAddAll"));
+    out.querySelectorAll("[data-pack-add]").forEach((b) => (b.onclick = async () => {
+      try {
+        await addPacking(state.trip.id, sugToPacking(sug[Number(b.dataset.packAdd)], forIdFinal, Number(b.dataset.packAdd)), state.me?.id);
+        b.textContent = "已加入"; b.disabled = true;
+        renderPacking(state.trip).catch(() => {});
+      } catch (e) { toast(humanError(e), false); }
+    }));
+  } catch (e) {
+    out.innerHTML = `<p class="status" data-ok="false">${humanError(e)}</p>`;
+  }
+}
+
+function sugToPacking(s, memberId, idx) {
+  return {
+    name: s.name,
+    category: s.category || null,
+    qty: Math.max(1, parseInt(s.qty, 10) || 1),
+    note: s.note || null,
+    member_id: memberId || null,
+    sort_order: idx,
+  };
+}
+
+async function addAllPacking(sug, memberId, btn) {
+  if (!Array.isArray(sug) || !sug.length) return;
+  const old = btn.textContent; btn.disabled = true; btn.textContent = "加入中…";
+  let ok = 0;
+  for (let i = 0; i < sug.length; i++) {
+    if (!sug[i]?.name) continue;
+    try { await addPacking(state.trip.id, sugToPacking(sug[i], memberId, i), state.me?.id); ok++; }
+    catch { /* 略過單筆失敗 */ }
+  }
+  await renderPacking(state.trip).catch(() => {});
+  $("#aiPackingModal").hidden = true;
+  toast(ok ? `已加入 ${ok} 項行李` : "沒有可加入的項目", !!ok);
+  if (ok) showPage("packing");
+  btn.disabled = false; btn.textContent = old;
 }
 
 // ---------- 共用 ----------
@@ -1277,6 +1572,7 @@ async function onDeleteTrip(id, title) {
       if (unsub) { unsub(); unsub = null; }
       if (unsubItin) { unsubItin(); unsubItin = null; }
       if (unsubExp) { unsubExp(); unsubExp = null; }
+      if (unsubPacking) { unsubPacking(); unsubPacking = null; }
       state.trip = null;
       renderOverviewState();
     }
@@ -1325,6 +1621,18 @@ async function boot() {
   // 記帳語意輸入
   $("#nlExpenseBtn").onclick = onNlExpense;
   $("#nlExpenseInput").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); onNlExpense(); } });
+
+  // 行李清單
+  $("#addPackingBtn").onclick = () => openPackingModal(null);
+  $("#packingModalClose").onclick = closePackingModal;
+  $("#packingForm").addEventListener("submit", onPackingSubmit);
+  $("#packingDeleteBtn").onclick = onPackingDelete;
+  $("#packingModal").addEventListener("click", (e) => { if (e.target.id === "packingModal") closePackingModal(); });
+  // AI 建議行李
+  $("#aiPackingBtn").onclick = openAiPacking;
+  $("#aiPackingClose").onclick = () => ($("#aiPackingModal").hidden = true);
+  $("#aiPackingGo").onclick = onAiPackingGo;
+  $("#aiPackingModal").addEventListener("click", (e) => { if (e.target.id === "aiPackingModal") $("#aiPackingModal").hidden = true; });
 
   // 行程項目 modal
   $("#addItemBtn").onclick = () => openItemModal(null);

@@ -19,16 +19,21 @@ async function listUsers(admin: SupabaseClient) {
   const [{ data: profs }, usersRes, { data: members }] = await Promise.all([
     admin.from("profiles").select("id, username, is_admin"),
     admin.auth.admin.listUsers({ page: 1, perPage: 1000 }),
-    admin.from("members").select("auth_uid, trip_id, display_name, trips(id, title)"),
+    admin.from("members").select("id, auth_uid, trip_id, display_name, is_admin, can_edit, trips(id, title)"),
   ]);
   const emailById = new Map((usersRes.data?.users || []).map((u) => [u.id, u.email]));
-  const tripsByUid = new Map<string, Array<{ id: string; title: string }>>();
+  type TripRole = { id: string; title: string; member_id: string; is_admin: boolean; can_edit: boolean };
+  const tripsByUid = new Map<string, Array<TripRole>>();
   for (const m of members || []) {
     if (!m.auth_uid) continue;
     const t = (m as { trips?: { id: string; title: string } }).trips;
     if (!t) continue;
     if (!tripsByUid.has(m.auth_uid)) tripsByUid.set(m.auth_uid, []);
-    tripsByUid.get(m.auth_uid)!.push({ id: t.id, title: t.title });
+    tripsByUid.get(m.auth_uid)!.push({
+      id: t.id, title: t.title, member_id: (m as { id: string }).id,
+      is_admin: !!(m as { is_admin?: boolean }).is_admin,
+      can_edit: (m as { can_edit?: boolean }).can_edit !== false,
+    });
   }
   return (profs || []).map((p) => ({
     id: p.id, username: p.username, is_admin: p.is_admin,
@@ -85,7 +90,11 @@ serve(async (req) => {
       if (trip_id) {
         const { data: dup } = await admin.from("members").select("id").eq("trip_id", trip_id).eq("auth_uid", userId).maybeSingle();
         if (!dup) {
-          const { error: merr } = await admin.from("members").insert({ trip_id, auth_uid: userId, display_name, color, is_admin: false });
+          const { error: merr } = await admin.from("members").insert({
+            trip_id, auth_uid: userId, display_name, color,
+            is_admin: !!body.is_admin,
+            can_edit: body.can_edit === undefined ? true : !!body.can_edit,
+          });
           if (merr) return json({ error: "加入行程失敗：" + merr.message }, 400);
         }
       }
@@ -120,7 +129,11 @@ serve(async (req) => {
         const { data: p } = await admin.from("profiles").select("username").eq("id", user_id).maybeSingle();
         display_name = p?.username || "成員";
       }
-      const { error } = await admin.from("members").insert({ trip_id, auth_uid: user_id, display_name, color: "#5E7C58", is_admin: false });
+      const { error } = await admin.from("members").insert({
+        trip_id, auth_uid: user_id, display_name, color: "#5E7C58",
+        is_admin: !!body.is_admin,
+        can_edit: body.can_edit === undefined ? true : !!body.can_edit,
+      });
       if (error) return json({ error: error.message }, 400);
       return json({ ok: true });
     }
@@ -129,6 +142,36 @@ serve(async (req) => {
       const { user_id, trip_id } = body;
       if (!user_id || !trip_id) return json({ error: "缺少欄位" }, 400);
       const { error } = await admin.from("members").delete().eq("trip_id", trip_id).eq("auth_uid", user_id);
+      if (error) return json({ error: error.message }, 400);
+      return json({ ok: true });
+    }
+
+    // 指定某成員為行程管理員（同行程其他人取消 is_admin）。可帶 member_id 或 user_id。
+    if (action === "set_trip_admin") {
+      const trip_id = body.trip_id;
+      if (!trip_id) return json({ error: "缺少 trip_id" }, 400);
+      let member_id = body.member_id;
+      if (!member_id && body.user_id) {
+        const { data: m } = await admin.from("members").select("id").eq("trip_id", trip_id).eq("auth_uid", body.user_id).maybeSingle();
+        member_id = m?.id;
+      }
+      if (!member_id) return json({ error: "找不到該成員" }, 400);
+      await admin.from("members").update({ is_admin: false }).eq("trip_id", trip_id);
+      const { error } = await admin.from("members").update({ is_admin: true, can_edit: true }).eq("id", member_id).eq("trip_id", trip_id);
+      if (error) return json({ error: error.message }, 400);
+      return json({ ok: true });
+    }
+
+    // 設定某成員為可編輯 / 唯讀。可帶 member_id 或 (trip_id + user_id)。
+    if (action === "set_member_can_edit") {
+      const can_edit = !!body.can_edit;
+      let member_id = body.member_id;
+      if (!member_id && body.trip_id && body.user_id) {
+        const { data: m } = await admin.from("members").select("id").eq("trip_id", body.trip_id).eq("auth_uid", body.user_id).maybeSingle();
+        member_id = m?.id;
+      }
+      if (!member_id) return json({ error: "找不到該成員" }, 400);
+      const { error } = await admin.from("members").update({ can_edit }).eq("id", member_id);
       if (error) return json({ error: error.message }, 400);
       return json({ ok: true });
     }

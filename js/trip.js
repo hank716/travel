@@ -14,8 +14,9 @@ export function clearSavedTrip() {
   localStorage.removeItem(LS_KEY);
 }
 
-// 建立新行程（建立者自動成為第一個成員）。code 留空則自動產生。
-export async function createTrip({ title, start, end, base, currencies, name, color, code }) {
+// 建立新行程。join=true（預設）→ 建立者成為第一個成員(管理員)；false → 建立者不參加。
+// code 留空則自動產生。
+export async function createTrip({ title, start, end, base, currencies, name, color, code, join = true }) {
   const { data, error } = await supabase.rpc("create_trip", {
     p_title: title,
     p_start: start || null,
@@ -25,6 +26,7 @@ export async function createTrip({ title, start, end, base, currencies, name, co
     p_name: name,
     p_color: color,
     p_code: code || null,
+    p_join: join,
   });
   if (error) throw error;
   return data; // trips row
@@ -63,6 +65,24 @@ export async function addMember(tripId, name, color) {
 export async function removeMember(memberId) {
   const { error } = await supabase.from("members").delete().eq("id", memberId);
   if (error) throw error;
+}
+
+// 指定某成員為行程管理員（RPC：全域 admin 或現任行程管理員皆可）
+export async function setTripAdmin(tripId, memberId) {
+  const { data, error } = await supabase.rpc("set_trip_admin", {
+    p_trip_id: tripId, p_member_id: memberId,
+  });
+  if (error) throw error;
+  return data;
+}
+
+// 設定某成員為可編輯 / 唯讀（RPC：全域 admin 或現任行程管理員皆可）
+export async function setMemberCanEdit(memberId, canEdit) {
+  const { data, error } = await supabase.rpc("set_member_can_edit", {
+    p_member_id: memberId, p_can_edit: canEdit,
+  });
+  if (error) throw error;
+  return data;
 }
 
 // 我有參與的所有行程（RLS 只會回我是成員的）

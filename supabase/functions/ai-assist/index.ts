@@ -152,6 +152,37 @@ function expensePrompt(payload: Record<string, unknown>): string {
   ].join("\n");
 }
 
+// AI 建議行李：吃天氣摘要 + 行程活動 + 偏好，產生要帶什麼。天氣模組不知道行李存在，
+// 這裡只是把天氣當輸入參數的「推薦引擎」。
+function packingPrompt(payload: Record<string, unknown>): string {
+  const trip = (payload.trip ?? {}) as { title?: string; start?: string; end?: string };
+  const days = (payload.days ?? []) as Array<Record<string, unknown>>;
+  const itinerary = (payload.itinerary as string[]) || [];
+  const preferences = (payload.preferences as string) || "";
+  const forMember = (payload.for_member as string) || "";
+  const weatherLines = days.length
+    ? days.map((d) => `- ${d.date} ${d.city ?? ""}：${d.condition ?? ""}，氣溫 ${d.tmin ?? "?"}~${d.tmax ?? "?"}°C，降雨機率 ${d.pop ?? "?"}%`).join("\n")
+    : "（無天氣資料，依季節常識判斷）";
+  return [
+    `你是旅遊行李顧問。請為「${trip.title ?? "這趟旅行"}」整理一份「要帶什麼」的行李清單。`,
+    trip.start ? `期間：${trip.start} ~ ${trip.end ?? ""}` : "",
+    forMember ? `這份清單是給：${forMember}` : "這份清單是「全體共用」物品（如證件、藥品、共用充電器等）。",
+    "",
+    "每天天氣：",
+    weatherLines,
+    itinerary.length ? `\n行程活動（依此判斷要帶的裝備，如登山→登山鞋、海邊→泳具）：${itinerary.join("、")}` : "",
+    preferences ? `\n使用者偏好/補充：${preferences}` : "",
+    "",
+    "規則：",
+    "- 依天氣給衣物（低溫→保暖外套、降雨→雨具、高溫高UV→防曬）；依行程活動給對應裝備；",
+    "- category 從 衣物|證件|電子|盥洗|藥品|其他 擇一；qty 給合理數量（整數）；",
+    forMember ? "- 以該成員個人會用到的東西為主，不要列全體共用品。" : "- 以全體會共用的東西為主（證件、藥品、轉接頭、雨傘等），不要列個人貼身衣物。",
+    "- note 一句話說明為什麼帶（如「降雨機率高」「9月東京早晚涼」）。",
+    "- 控制在 8~16 項，務實、不要湊數。",
+    '只輸出 JSON 陣列：[{"name":"物品名","category":"衣物|證件|電子|盥洗|藥品|其他","qty":1,"note":"一句原因"}]。',
+  ].filter(Boolean).join("\n");
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
@@ -183,6 +214,15 @@ serve(async (req) => {
         let parsed: unknown = {};
         try { parsed = JSON.parse(raw); } catch { parsed = {}; }
         return json({ parsed });
+      }
+      case "suggest_packing": {
+        const raw = await gemini(packingPrompt(payload), { jsonOut: true, maxTokens: 2048 });
+        let parsed: unknown = [];
+        try { parsed = JSON.parse(raw); } catch { parsed = []; }
+        const items: unknown[] = Array.isArray(parsed) ? parsed
+          : (Array.isArray((parsed as Record<string, unknown>)?.items) ? (parsed as { items: unknown[] }).items
+          : []);
+        return json({ items });
       }
       default:
         return json({ error: `不支援的 mode：${mode ?? "(空)"}` }, 400);
