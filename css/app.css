@@ -327,7 +327,15 @@ body.in-trip .tabbar { display: flex; }
   .itin-actions { flex-direction: row; width: 100%; justify-content: flex-end; }
   .map-frame { height: 280px; }
   .trip-badge .btn { padding: 6px 10px; }
-  .brand span { display: none; } /* 窄螢幕只留 emoji 省空間 */
+  /* 標題＋按鈕在窄螢幕換行，避免超出版面（行李/行程等卡片標頭） */
+  .card-head { flex-wrap: wrap; }
+  .card-head .card-title { flex: 1 1 auto; min-width: 0; }
+  /* 行李列：勾選框＋內容一行，編輯鈕換到下方整列 */
+  .pack-row { flex-wrap: wrap; }
+  .pack-body { flex-basis: 0; }
+  .pack-row .itin-actions { flex-basis: 100%; flex-direction: row; justify-content: flex-end; }
+  /* 顯示品牌字「旅程規劃」，並壓縮行程切換器寬度讓兩者並存 */
+  .trip-switcher { max-width: 40vw; }
 }
 
 /* ---------- Modal ---------- */
