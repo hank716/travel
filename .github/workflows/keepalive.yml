@@ -1,0 +1,49 @@
+# Supabase 免費方案連續 7 天沒有 API 活動就會把專案暫停。
+# 這個 workflow 每天打一次真的會進 Postgres 的 REST 查詢當心跳。
+#
+# 用的是 anon key —— 它本來就是公開的（已 commit 在 config.js，靠 RLS 保護資料），
+# 所以直接寫在這裡即可，不需要動到任何私密金鑰。
+name: keepalive
+
+on:
+  schedule:
+    - cron: "0 3 * * *"   # 每天 03:00 UTC（台北 11:00）：心跳
+    - cron: "0 3 1 * *"   # 每月 1 號：順便產生 repo 活動，見下方 touch job
+  workflow_dispatch:
+
+env:
+  SUPABASE_URL: https://bmwzoqdypgrwmcxasxnr.supabase.co
+  SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJtd3pvcWR5cGdyd21jeGFzeG5yIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA5NzQ1NDAsImV4cCI6MjA5NjU1MDU0MH0.fLuCl3NK-X-JDvB1GZ3YwECwLvgbdL-vUD3pZ65jpeY
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase REST
+        run: |
+          # 查一張真的存在的表 → 走 PostgREST → Postgres，才算得上「活動」。
+          # RLS 會讓 anon 拿到空陣列，但請求本身有進到資料庫，這就夠了。
+          code=$(curl -sS -o /tmp/out.txt -w '%{http_code}' \
+            "$SUPABASE_URL/rest/v1/fx_cache?select=base&limit=1" \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            -H "Authorization: Bearer $SUPABASE_ANON_KEY")
+          echo "HTTP $code / body: $(cat /tmp/out.txt)"
+          # 非 200 就讓 job 失敗，GitHub 會寄信通知（專案真的被停時你會知道）
+          [ "$code" = "200" ]
+
+  # GitHub 的規則：repo 連續 60 天沒活動，排程 workflow 會被自動停用
+  # ——那會諷刺地讓上面的心跳自己失效。每月推一個空 commit 重置這個計時器。
+  touch:
+    if: github.event.schedule == '0 3 1 * *'
+    needs: ping
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Empty commit to reset GitHub's 60-day inactivity timer
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit --allow-empty -m "chore: keepalive $(date -u +%Y-%m-%d)"
+          git push

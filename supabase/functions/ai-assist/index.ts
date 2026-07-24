@@ -13,8 +13,20 @@ const CORS = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-// 主模型 + 備援；遇 503/429 會重試與切換
-const GEMINI_MODELS = ["gemini-flash-latest", "gemini-flash-lite-latest"];
+// 每次部署遞增。免費方案沒有 log，靠 diag 回傳這個值來確認線上跑的是哪一版。
+const BUILD = "2026-07-24-1";
+
+// Gemini 各世代的 thinking 參數互不相容，傳錯世代 → 400 INVALID_ARGUMENT：
+//   2.5 系列：thinkingConfig.thinkingBudget（0 = 關閉思考）
+//   3.x 系列：thinkingConfig.thinkingLevel（"low"/"high"，不能關閉）
+// -latest 是浮動別名，Google 改版時會跨世代飄移（2026-07 的故障就是這樣來的：
+// 別名飄到 3.x 後，寫死的 thinkingBudget 讓五個 mode 全部 400）。
+// 所以 thinking 設定綁在「模型」上，而不是寫死成全域；最後再壓一顆固定版號的保底模型。
+const GEMINI_MODELS: Array<{ id: string; thinking: Record<string, unknown> }> = [
+  { id: "gemini-flash-latest", thinking: { thinkingLevel: "low" } },
+  { id: "gemini-flash-lite-latest", thinking: { thinkingLevel: "low" } },
+  { id: "gemini-2.5-flash", thinking: { thinkingBudget: 0 } }, // 固定版號，不會被別名飄移波及
+];
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function json(body: unknown, status = 200) {
@@ -23,46 +35,117 @@ function json(body: unknown, status = 200) {
   });
 }
 
-async function gemini(prompt: string, opts: { jsonOut?: boolean; maxTokens?: number } = {}): Promise<string> {
+function apiKey(): string {
   const key = Deno.env.get("GEMINI_API_KEY");
   if (!key) throw new Error("尚未設定 GEMINI_API_KEY");
+  return key;
+}
+
+function buildBody(prompt: string, thinking: Record<string, unknown>, opts: { jsonOut?: boolean; maxTokens?: number }) {
   const generationConfig: Record<string, unknown> = {
     temperature: opts.jsonOut ? 0.2 : 0.7,
-    maxOutputTokens: opts.maxTokens ?? 800,
-    // gemini-flash-latest 是 thinking 模型，思考會吃掉輸出額度造成截斷/空結果。
-    // 我們的任務都是簡單格式化，一律關閉思考，輸出才穩定完整。
-    thinkingConfig: { thinkingBudget: 0 },
+    maxOutputTokens: opts.maxTokens ?? 2048,
+    thinkingConfig: thinking,
   };
   if (opts.jsonOut) generationConfig.responseMimeType = "application/json";
-  const body = JSON.stringify({
+  return JSON.stringify({
     contents: [{ role: "user", parts: [{ text: prompt }] }],
     generationConfig,
   });
+}
 
-  let lastErr = "";
+// 只取一般輸出片段，濾掉 thought（思考）片段，避免思考殘片外洩到結果。
+// 註：Gemini 3.x 會在一般 text part 上掛 thoughtSignature，那不是 thought part，不能濾掉。
+function extractText(data: unknown): string {
+  const parts = ((data as Record<string, any>)?.candidates?.[0]?.content?.parts ?? []) as Array<{ text?: string; thought?: boolean }>;
+  return parts.filter((p) => !p.thought && typeof p.text === "string").map((p) => p.text).join("").trim();
+}
+
+async function gemini(
+  prompt: string,
+  opts: { jsonOut?: boolean; maxTokens?: number; mode?: string } = {},
+): Promise<{ text: string; model: string }> {
+  const key = apiKey();
+  const attempts: string[] = [];
+
   for (const model of GEMINI_MODELS) {
+    const body = buildBody(prompt, model.thinking, opts); // thinking 設定因模型而異，要逐一組
     for (let attempt = 0; attempt < 3; attempt++) {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model.id}:generateContent?key=${key}`;
       const res = await fetch(url, {
         method: "POST", headers: { "Content-Type": "application/json" }, body,
       });
+
       if (res.ok) {
         const data = await res.json();
-        // 只取一般輸出片段，濾掉 thought（思考）片段，避免思考/JSON 殘片外洩到結果
-        const parts = (data?.candidates?.[0]?.content?.parts ?? []) as Array<{ text?: string; thought?: boolean }>;
-        return parts.filter((p) => !p.thought && typeof p.text === "string").map((p) => p.text).join("").trim();
+        const finish = data?.candidates?.[0]?.finishReason;
+        const text = extractText(data);
+        // 被截斷或空結果就換下一個模型，不要把半截 JSON 往上丟
+        if (finish === "MAX_TOKENS" || !text) {
+          attempts.push(`${model.id} ${finish === "MAX_TOKENS" ? "輸出被截斷(MAX_TOKENS)" : "回傳空內容"}`);
+          break;
+        }
+        return { text, model: model.id };
       }
+
       const t = await res.text();
-      lastErr = `${res.status}: ${t.slice(0, 160)}`;
-      if (res.status === 404) break;                 // 模型不存在 → 換下一個
-      if (res.status === 503 || res.status === 429) { // 壅塞/限流 → 退避重試
+      if (res.status === 503 || res.status === 429) { // 壅塞/限流 → 退避重試同一個模型
+        attempts.push(`${model.id} ${res.status}`);
         await sleep(1200 * (attempt + 1));
         continue;
       }
-      throw new Error(`Gemini ${lastErr}`);            // 其他錯誤直接拋
+      // 400（含參數不相容）/ 404（模型不存在）/ 其他 → 換下一個模型，不要直接放棄。
+      // 舊版在這裡 throw，導致備援清單形同虛設。
+      attempts.push(`${model.id} ${res.status} ${t.slice(0, 120).replace(/\s+/g, " ")}`);
+      break;
     }
   }
-  throw new Error(`Gemini 暫時無法使用，請稍後再試（${lastErr}）`);
+  throw new Error(`AI 全部模型失敗${opts.mode ? `（mode=${opts.mode}）` : ""}：${attempts.join(" | ")}`);
+}
+
+// 回傳格式壞掉時要講清楚，不要靜默變空陣列讓前端顯示「沒有建議」。
+function parseJson(raw: string, mode: string): unknown {
+  const s = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/```$/, "").trim();
+  try {
+    return JSON.parse(s);
+  } catch {
+    throw new Error(`AI 回傳的不是合法 JSON（mode=${mode}）：${s.slice(0, 160)}`);
+  }
+}
+
+// 容錯：模型偶爾會把陣列包在物件裡回來
+function asArray(parsed: unknown, ...keys: string[]): unknown[] {
+  if (Array.isArray(parsed)) return parsed;
+  const obj = parsed as Record<string, unknown> | null;
+  for (const k of keys) if (Array.isArray(obj?.[k])) return obj![k] as unknown[];
+  return [];
+}
+
+// 沒有 log 可看時的自我檢測：逐一 probe 每個模型，回報誰活著。
+// 只回布林 key_set，絕不回金鑰內容。
+async function diagnose() {
+  const key = Deno.env.get("GEMINI_API_KEY");
+  const models: Array<Record<string, unknown>> = [];
+  for (const m of GEMINI_MODELS) {
+    if (!key) { models.push({ id: m.id, ok: false, error: "no key" }); continue; }
+    const t0 = Date.now();
+    try {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${m.id}:generateContent?key=${key}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: buildBody("ping", m.thinking, { maxTokens: 16 }),
+        },
+      );
+      const ms = Date.now() - t0;
+      if (res.ok) models.push({ id: m.id, ok: true, status: 200, ms });
+      else models.push({ id: m.id, ok: false, status: res.status, ms, error: (await res.text()).slice(0, 200).replace(/\s+/g, " ") });
+    } catch (e) {
+      models.push({ id: m.id, ok: false, error: String((e as Error)?.message ?? e).slice(0, 200) });
+    }
+  }
+  return { build: BUILD, key_set: !!key, models };
 }
 
 function weatherPrompt(payload: Record<string, unknown>): string {
@@ -188,41 +271,34 @@ serve(async (req) => {
   try {
     const { mode, ...payload } = await req.json().catch(() => ({}));
     switch (mode) {
+      case "diag":
+        return json(await diagnose());
       case "weather_suggest": {
-        const text = await gemini(weatherPrompt(payload), { maxTokens: 1400 });
-        return json({ text });
+        const { text, model } = await gemini(weatherPrompt(payload), { maxTokens: 2048, mode });
+        return json({ text, _model: model });
       }
       case "resolve_districts": {
-        const raw = await gemini(districtsPrompt(payload), { jsonOut: true });
-        let areas: unknown = [];
-        try { areas = JSON.parse(raw); } catch { areas = []; }
-        return json({ areas });
+        // 這個 mode 刻意保持寬容：js/weather.js 有自己的降級路徑，
+        // 不該讓地區解析失敗連帶炸掉整個天氣頁。
+        try {
+          const { text } = await gemini(districtsPrompt(payload), { jsonOut: true, maxTokens: 2048, mode });
+          return json({ areas: asArray(parseJson(text, mode), "areas") });
+        } catch {
+          return json({ areas: [] });
+        }
       }
       case "suggest_itinerary": {
-        const raw = await gemini(itineraryPrompt(payload), { jsonOut: true, maxTokens: 3072 });
-        let parsed: unknown = [];
-        try { parsed = JSON.parse(raw); } catch { parsed = []; }
-        // 容錯：可能回成物件包陣列
-        let items: unknown[] = Array.isArray(parsed) ? parsed
-          : (Array.isArray((parsed as Record<string, unknown>)?.items) ? (parsed as { items: unknown[] }).items
-          : Array.isArray((parsed as Record<string, unknown>)?.itinerary) ? (parsed as { itinerary: unknown[] }).itinerary
-          : []);
-        return json({ items });
+        // 10 天行程實測要 ~4000 output token，舊值 3072 會被截斷
+        const { text, model } = await gemini(itineraryPrompt(payload), { jsonOut: true, maxTokens: 8192, mode });
+        return json({ items: asArray(parseJson(text, mode), "items", "itinerary"), _model: model });
       }
       case "parse_expense": {
-        const raw = await gemini(expensePrompt(payload), { jsonOut: true });
-        let parsed: unknown = {};
-        try { parsed = JSON.parse(raw); } catch { parsed = {}; }
-        return json({ parsed });
+        const { text, model } = await gemini(expensePrompt(payload), { jsonOut: true, maxTokens: 2048, mode });
+        return json({ parsed: parseJson(text, mode), _model: model });
       }
       case "suggest_packing": {
-        const raw = await gemini(packingPrompt(payload), { jsonOut: true, maxTokens: 2048 });
-        let parsed: unknown = [];
-        try { parsed = JSON.parse(raw); } catch { parsed = []; }
-        const items: unknown[] = Array.isArray(parsed) ? parsed
-          : (Array.isArray((parsed as Record<string, unknown>)?.items) ? (parsed as { items: unknown[] }).items
-          : []);
-        return json({ items });
+        const { text, model } = await gemini(packingPrompt(payload), { jsonOut: true, maxTokens: 4096, mode });
+        return json({ items: asArray(parseJson(text, mode), "items"), _model: model });
       }
       default:
         return json({ error: `不支援的 mode：${mode ?? "(空)"}` }, 400);

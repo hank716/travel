@@ -13,3 +13,7 @@ export async function callAI(mode, payload = {}) {
   }
   return data; // { text }
 }
+
+// Supabase 免費方案沒有 log，出事時在瀏覽器 console 打 __aiDiag() 就能知道
+// 是金鑰沒設、模型飄移、還是配額用完。
+window.__aiDiag = () => callAI("diag").then((d) => { console.log(d); return d; });

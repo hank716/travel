@@ -1514,6 +1514,8 @@ function humanError(err) {
   if (/name required/i.test(m)) return "請輸入你的名字。";
   if (/not found/i.test(m)) return "找不到這個行程碼，請確認後再試。";
   if (/not authenticated/i.test(m)) return "身份尚未就緒，請重新整理頁面。";
+  if (/RESOURCE_EXHAUSTED|\b429\b/.test(m)) return "AI 今天的免費額度用完了，請稍後再試。";
+  if (/不是合法 JSON|全部模型失敗/.test(m)) return "AI 服務異常：" + m;
   return m;
 }
 
