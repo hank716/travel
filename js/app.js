@@ -5,8 +5,9 @@ import {
 } from "./constants.js";
 import { getRates, rateToBase } from "./fx.js";
 import {
-  listItems, addItem, updateItem, deleteItem, subscribeItinerary,
+  listItems, addItem, updateItem, deleteItem, clearItems, subscribeItinerary,
 } from "./itinerary.js";
+import { attachSwipeDelete } from "./swipe.js";
 import {
   listExpenses, addExpense, updateExpense, deleteExpense, subscribeExpenses,
 } from "./expenses.js";
@@ -944,6 +945,7 @@ async function renderItinerary(trip) {
   if (!items.length) {
     list.innerHTML = `<p class="status">還沒有任何項目，點右上角「＋ 新增項目」開始排行程。</p>`;
     $("#mapOpen").href = buildMapUrl([]);
+    setHidden("#clearItinBtn", true);
     return;
   }
   list.innerHTML = showKeys.map((k) => `
@@ -956,6 +958,21 @@ async function renderItinerary(trip) {
     (b.onclick = () => previewMap(b.dataset.map)));
   list.querySelectorAll("[data-edit]").forEach((b) =>
     (b.onclick = () => openItemModal(items.find((i) => i.id === b.dataset.edit))));
+
+  // 一鍵清空（唯讀成員不給）
+  const clearBtn = $("#clearItinBtn");
+  if (clearBtn) {
+    clearBtn.hidden = !canEdit();
+    clearBtn.onclick = () => onClearItinerary(trip, items, groups, dayKeys);
+  }
+
+  // 左滑刪除
+  if (canEdit()) {
+    attachSwipeDelete(list, {
+      rowSelector: ".itin-item",
+      onDelete: (row) => onSwipeDeleteItem(trip, items.find((i) => i.id === row.dataset.id)),
+    });
+  }
 
   // 「在 Google Maps 開啟」= 目前顯示日期的整條行程路線
   const shownItems = showKeys.flatMap((k) => groups.get(k) || []);
@@ -974,7 +991,7 @@ function renderItemCard(it) {
     : "";
   const q = it.map_query || it.location_name || it.title;
   return `
-    <div class="itin-item">
+    <div class="itin-item" data-id="${it.id}">
       <div class="itin-time">${time || "·"}</div>
       <div class="itin-body">
         <div class="itin-title">${CATEGORY_ICON[it.category] || "•"} ${escapeHtml(it.title)}
@@ -987,6 +1004,48 @@ function renderItemCard(it) {
         <button class="btn btn--ghost btn--sm" data-edit="${it.id}">編輯</button>
       </div>
     </div>`;
+}
+
+// 一鍵清空：多天時給「這天 / 全部」兩個範圍，單天就只有「全部」
+async function onClearItinerary(trip, items, groups, dayKeys) {
+  if (!guardEdit()) return;
+  const ALL = "__all__";
+  const choices = [];
+  if (dayKeys.length > 1 && groups.has(state.activeDay)) {
+    choices.push({
+      value: state.activeDay, danger: true,
+      label: `清空 ${dayLabel(state.activeDay)} · ${groups.get(state.activeDay).length} 筆`,
+    });
+  }
+  choices.push({ value: ALL, label: `清空全部 · ${items.length} 筆`, danger: true });
+
+  const pick = await choiceDialog({ title: "清空行程", body: "這個動作無法復原。", choices });
+  if (pick === null) return;
+  const n = pick === ALL ? items.length : groups.get(pick).length;
+  try {
+    await clearItems(trip.id, pick === ALL ? null : pick);
+    toast(`已清空 ${n} 筆`);
+    await renderItinerary(trip);
+  } catch (e) { toast(humanError(e), false); }
+}
+
+// 左滑刪除單筆：不再問一次，改用 toast 的「復原」把整筆插回去（id 會換新）
+async function onSwipeDeleteItem(trip, item) {
+  if (!item || !guardEdit()) return;
+  try {
+    await deleteItem(item.id);
+    await renderItinerary(trip);
+    toast(`已刪除「${item.title}」`, true, {
+      label: "復原",
+      run: async () => {
+        try {
+          await addItem(trip.id, item, item.created_by);
+          await renderItinerary(trip);
+          toast("已復原");
+        } catch (e) { toast(humanError(e), false); }
+      },
+    });
+  } catch (e) { toast(humanError(e), false); }
 }
 
 // ---------- 地圖 ----------
@@ -1190,6 +1249,12 @@ async function renderExpenses(trip) {
     list.innerHTML = expenses.map((e) => renderExpenseRow(e, memberById, base)).join("");
     list.querySelectorAll("[data-exp-edit]").forEach((b) =>
       (b.onclick = () => openExpenseModal(expenses.find((x) => x.id === b.dataset.expEdit))));
+    if (canEdit()) {
+      attachSwipeDelete(list, {
+        rowSelector: ".exp-row",
+        onDelete: (row) => onSwipeDeleteExpense(trip, expenses.find((x) => x.id === row.dataset.id)),
+      });
+    }
   }
 
   renderSettlement(expenses, base);
@@ -1200,7 +1265,7 @@ function renderExpenseRow(e, memberById, base) {
   const inBase = Number(e.amount) * (Number(e.rate_to_base) || 1);
   const names = (e.expense_splits || []).map((s) => memberById.get(s.member_id)?.display_name).filter(Boolean);
   return `
-    <div class="exp-row" role="button" tabindex="0" data-exp-edit="${e.id}">
+    <div class="exp-row" role="button" tabindex="0" data-id="${e.id}" data-exp-edit="${e.id}">
       <div class="exp-icon">${EXP_ICON[e.category] || "•"}</div>
       <div class="exp-body">
         <div class="exp-top">
@@ -1215,6 +1280,25 @@ function renderExpenseRow(e, memberById, base) {
         </div>
       </div>
     </div>`;
+}
+
+// 左滑刪除支出：復原時連分帳一起插回（addExpense 的第三個參數就吃 expense_splits 的形狀）
+async function onSwipeDeleteExpense(trip, exp) {
+  if (!exp || !guardEdit()) return;
+  try {
+    await deleteExpense(exp.id);
+    await renderExpenses(trip);
+    toast(`已刪除「${exp.description || exp.category || "支出"}」`, true, {
+      label: "復原",
+      run: async () => {
+        try {
+          await addExpense(trip.id, exp, exp.expense_splits || []);
+          await renderExpenses(trip);
+          toast("已復原");
+        } catch (e) { toast(humanError(e), false); }
+      },
+    });
+  } catch (e) { toast(humanError(e), false); }
 }
 
 function renderSettlement(expenses, base) {
@@ -1403,11 +1487,37 @@ async function renderPacking(trip) {
     (b.onchange = () => onTogglePacked(b.dataset.packCheck, b.checked)));
   list.querySelectorAll("[data-pack-edit]").forEach((b) =>
     (b.onclick = () => openPackingModal(items.find((i) => i.id === b.dataset.packEdit))));
+
+  if (editable) {
+    attachSwipeDelete(list, {
+      rowSelector: ".pack-row",
+      onDelete: (row) => onSwipeDeletePacking(trip, items.find((i) => i.id === row.dataset.id)),
+    });
+  }
+}
+
+// 左滑刪除行李物品
+async function onSwipeDeletePacking(trip, item) {
+  if (!item || !guardEdit()) return;
+  try {
+    await deletePacking(item.id);
+    await renderPacking(trip);
+    toast(`已刪除「${item.name}」`, true, {
+      label: "復原",
+      run: async () => {
+        try {
+          await addPacking(trip.id, item, item.created_by);
+          await renderPacking(trip);
+          toast("已復原");
+        } catch (e) { toast(humanError(e), false); }
+      },
+    });
+  } catch (e) { toast(humanError(e), false); }
 }
 
 function renderPackingRow(it, editable) {
   return `
-    <div class="pack-row ${it.checked ? "is-done" : ""}">
+    <div class="pack-row ${it.checked ? "is-done" : ""}" data-id="${it.id}">
       <label class="pack-check">
         <input type="checkbox" data-pack-check="${it.id}" ${it.checked ? "checked" : ""} ${editable ? "" : "disabled"} />
       </label>
@@ -1563,36 +1673,62 @@ function escapeHtml(s) {
 function escapeAttr(s) { return escapeHtml(s); }
 
 // 底部短暫提示（取代成功/失敗 alert）
+// action = { label, run } 時附一顆按鈕（例：刪除後的「復原」），並把逾時拉長讓人來得及按
 let toastTimer = null;
-function toast(msg, ok = true) {
+function toast(msg, ok = true, action = null) {
   const el = $("#toast");
-  el.textContent = msg;
+  el.textContent = msg;                 // 純文字，不碰 innerHTML
   el.dataset.ok = ok ? "true" : "false";
+  if (action) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "toast-act";
+    b.textContent = action.label;
+    b.onclick = () => { clearTimeout(toastTimer); el.hidden = true; action.run(); };
+    el.appendChild(b);
+  }
   el.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (el.hidden = true), 2600);
+  toastTimer = setTimeout(() => (el.hidden = true), action ? 5000 : 2600);
+}
+
+// 多選項彈窗 → Promise<選中的 value>；取消或點背景 → null
+// choices: [{ value, label, danger }]，按鈕依序插在「取消」之前
+function choiceDialog({ title = "確認", body = "", choices = [] } = {}) {
+  return new Promise((resolve) => {
+    const modal = $("#confirmModal");
+    const actions = $("#confirmActions");
+    const cancel = $("#confirmCancel");
+    $("#confirmTitle").textContent = title;
+    $("#confirmBody").textContent = body;
+
+    const made = choices.map((c) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "btn";
+      b.textContent = c.label;
+      if (c.danger) b.style.background = "var(--accent-dark)";
+      b.onclick = () => close(c.value);
+      actions.insertBefore(b, cancel);
+      return b;
+    });
+
+    const close = (val) => {
+      modal.hidden = true;
+      made.forEach((b) => b.remove());
+      cancel.onclick = null; modal.onclick = null;
+      resolve(val);
+    };
+    cancel.onclick = () => close(null);
+    modal.onclick = (e) => { if (e.target.id === "confirmModal") close(null); };
+    modal.hidden = false;
+  });
 }
 
 // 統一確認彈窗（取代原生 confirm）→ Promise<boolean>
 function confirmDialog({ title = "確認", body = "", danger = false, okText = "確定" } = {}) {
-  return new Promise((resolve) => {
-    const modal = $("#confirmModal");
-    $("#confirmTitle").textContent = title;
-    $("#confirmBody").textContent = body;
-    const okBtn = $("#confirmOk");
-    okBtn.textContent = okText;
-    okBtn.classList.toggle("btn--ghost", false);
-    okBtn.style.background = danger ? "var(--accent-dark)" : "";
-    const close = (val) => {
-      modal.hidden = true;
-      okBtn.onclick = null; $("#confirmCancel").onclick = null; modal.onclick = null;
-      resolve(val);
-    };
-    okBtn.onclick = () => close(true);
-    $("#confirmCancel").onclick = () => close(false);
-    modal.onclick = (e) => { if (e.target.id === "confirmModal") close(false); };
-    modal.hidden = false;
-  });
+  return choiceDialog({ title, body, choices: [{ value: true, label: okText, danger }] })
+    .then((v) => v === true);
 }
 
 function humanError(err) {

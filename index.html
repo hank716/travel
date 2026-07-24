@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#FFF4E8" />
   <title>旅程規劃 · Trip Planner</title>
-  <link rel="stylesheet" href="./css/app.css?v=20260724d" />
+  <link rel="stylesheet" href="./css/app.css?v=20260725a" />
 </head>
 <body>
   <header class="topbar">
@@ -200,6 +200,7 @@
           <div class="card-head">
             <h2 class="card-title">行程規劃</h2>
             <div style="display:flex; gap:8px;">
+              <button id="clearItinBtn" class="btn btn--ghost btn--sm" type="button" hidden>🗑️ 清空</button>
               <button id="aiItinBtn" class="btn btn--ghost btn--sm" type="button">✨ AI 建議</button>
               <button id="addItemBtn" class="btn btn--sm" type="button">＋ 新增項目</button>
             </div>
@@ -607,9 +608,9 @@
       <div class="modal-box card">
         <h2 id="confirmTitle" class="card-title">確認</h2>
         <p id="confirmBody" class="status" style="white-space:pre-wrap;"></p>
-        <div class="row" style="justify-content:flex-end; margin-top:8px;">
+        <!-- 選項按鈕由 choiceDialog() 動態插在取消鈕之前 -->
+        <div id="confirmActions" class="row" style="justify-content:flex-end; margin-top:8px; flex-wrap:wrap;">
           <button id="confirmCancel" type="button" class="btn btn--ghost">取消</button>
-          <button id="confirmOk" type="button" class="btn">確定</button>
         </div>
       </div>
     </div>
@@ -627,7 +628,7 @@
 
   <div id="toast" class="toast" hidden></div>
 
-  <script src="./config.js?v=20260724d"></script>
-  <script type="module" src="./js/app.js?v=20260724d"></script>
+  <script src="./config.js?v=20260725a"></script>
+  <script type="module" src="./js/app.js?v=20260725a"></script>
 </body>
 </html>

@@ -39,6 +39,16 @@ export async function deleteItem(id) {
   if (error) throw error;
 }
 
+// 批次清空。day: 'YYYY-MM-DD' = 只清那天；'' = 只清未排定日期；null = 全部清光。
+// 清單那邊用 (day_date || "") 當分組 key，所以空字串要對應 is null，不能用 eq。
+export async function clearItems(tripId, day = null) {
+  let q = supabase.from("itinerary_items").delete().eq("trip_id", tripId);
+  if (day === "") q = q.is("day_date", null);
+  else if (day) q = q.eq("day_date", day);
+  const { error } = await q;
+  if (error) throw error;
+}
+
 export function subscribeItinerary(tripId, onChange) {
   const channel = supabase
     .channel("itin-" + tripId)

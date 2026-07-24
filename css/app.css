@@ -225,11 +225,22 @@ select[multiple] option { padding: 5px 8px; border-radius: 8px; }
 
 .map-frame { width: 100%; height: 360px; border: 0; border-radius: var(--radius-sm); }
 
+/* ---------- 左滑刪除 ---------- */
+/* touch-action: pan-y = 直向捲動維持原生，橫向留給我們自己處理 */
+.swipe { position: relative; overflow: hidden; border-radius: var(--radius-sm); touch-action: pan-y; }
+/* 預設收在右邊界外，跟著手指推進來蓋在列上（列本身不動，內容才不會被裁掉） */
+.swipe-del { position: absolute; top: 0; right: 0; bottom: 0; z-index: 1; width: 88px; border: 0; padding: 0;
+  background: var(--accent-dark); color: #fff; font: inherit; font-weight: 800; font-size: 14px; cursor: pointer;
+  transform: translateX(88px); transition: transform .18s ease; will-change: transform; }
+.swipe.is-dragging .swipe-del { transition: none; }
+.swipe.is-dragging { user-select: none; }   /* 桌機用滑鼠拖曳時不要選到文字 */
+
 /* ---------- 行李清單 ---------- */
 .packing-list { display: flex; flex-direction: column; gap: 10px; }
 .pack-group { display: flex; flex-direction: column; gap: 8px; }
 .pack-row { display: flex; gap: 12px; align-items: flex-start; background: var(--bg-soft); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px 14px; }
-.pack-row.is-done { opacity: .6; }
+/* 已打包：用顏色淡化而不是 opacity — opacity 會讓左滑的紅底透出來 */
+.pack-row.is-done { color: var(--muted); }
 .pack-row.is-done .pack-name { text-decoration: line-through; }
 .pack-check { flex: 0 0 auto; padding-top: 2px; }
 .pack-check input { width: 20px; height: 20px; }
@@ -372,6 +383,8 @@ body.in-trip .tabbar { display: flex; }
 /* ---------- Toast ---------- */
 .toast { position: fixed; left: 50%; bottom: calc(84px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 120; background: var(--ink); color: #fff; font-weight: 700; font-size: 14px; padding: 11px 18px; border-radius: 999px; box-shadow: var(--shadow); max-width: calc(100vw - 32px); text-align: center; }
 .toast[data-ok="false"] { background: var(--accent-dark); }
+.toast-act { margin-left: 12px; background: transparent; border: 0; color: var(--accent-soft);
+  font: inherit; font-weight: 800; text-decoration: underline; cursor: pointer; }
 @media (min-width: 900px) { .toast { bottom: 28px; } }
 
 .feature-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
