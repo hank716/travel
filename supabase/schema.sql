@@ -363,20 +363,33 @@ drop function if exists public.add_member(uuid, text, text);
 drop function if exists public.join_trip(text, text, text);
 
 -- -----------------------------------------------------------------------------
--- 函式權限：預設 PostgREST 會把 public schema 的函式全部曝成 /rest/v1/rpc/*，
--- 且 anon / authenticated 預設都有 EXECUTE。這裡收斂到實際需要的範圍。
+-- 函式權限：PostgREST 會把 public schema 的函式全部曝成 /rest/v1/rpc/*。
+--
+-- ⚠️ 關鍵：Postgres 建立函式時預設把 EXECUTE 授予 **PUBLIC**（ACL 顯示為 `=X/postgres`），
+-- anon / authenticated 是「透過 PUBLIC 繼承」而不是各自持有。所以
+-- `revoke ... from anon` 是無效的——必須 revoke from PUBLIC，再明確 grant 回去。
+-- 作法：全部收掉 → 只把真的需要的授予 authenticated。
 -- -----------------------------------------------------------------------------
 
--- anon（未登入）不需要呼叫 public schema 的任何函式：
--- 登入/註冊走 GoTrue 的 /auth/v1/*，不經 anon 的 SQL 權限。
-revoke execute on all functions in schema public from anon;
--- 之後新增的函式也預設不給 anon
-alter default privileges in schema public revoke execute on functions from anon;
+revoke execute on all functions in schema public from public, anon, authenticated;
+-- 之後新增的函式也不要自動給出去
+alter default privileges in schema public revoke execute on functions from public;
 
--- handle_new_user 是 auth.users 的 trigger 函式，不該能被當 RPC 呼叫。
--- （trigger 觸發不看呼叫者的 EXECUTE，是以 table owner supabase_auth_admin 的脈絡跑，
---   所以收掉這個權限不影響建立帳號。）
-revoke execute on function public.handle_new_user() from anon, authenticated;
+-- 前端真的會呼叫的 RPC（三個內部都有 admin 檢查）
+grant execute on function public.create_trip(text, date, date, text, text[], text, text, text, boolean) to authenticated;
+grant execute on function public.set_trip_admin(uuid, uuid)          to authenticated;
+grant execute on function public.set_member_can_edit(uuid, boolean)  to authenticated;
+
+-- RLS policy 內部會呼叫這四個 helper，authenticated 必須保有 EXECUTE。
+-- 它們只回傳「目前登入者」的布林值，不吃也不吐別人的資料，曝出來無實質風險。
+grant execute on function public.is_admin()             to authenticated;
+grant execute on function public.is_trip_member(uuid)   to authenticated;
+grant execute on function public.is_trip_editor(uuid)   to authenticated;
+grant execute on function public.is_trip_admin(uuid)    to authenticated;
+
+-- 刻意不授予任何人：
+--   gen_trip_code()   只被 create_trip（SECURITY DEFINER，以 owner 身分跑）內部呼叫
+--   handle_new_user() 是 auth.users 的 trigger 函式，trigger 觸發不看呼叫者的 EXECUTE
 
 -- -----------------------------------------------------------------------------
 -- Row Level Security
