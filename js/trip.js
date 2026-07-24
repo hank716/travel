@@ -32,13 +32,6 @@ export async function createTrip({ title, start, end, base, currencies, name, co
   return data; // trips row
 }
 
-// 用行程碼取得名單（登入挑名字用；免先成為成員）
-export async function getRoster(code) {
-  const { data, error } = await supabase.rpc("get_roster", { p_code: code });
-  if (error) throw error;
-  return data || [];
-}
-
 // 管理員：建立成員帳號（使用者名稱+密碼）並加入這趟（走 Edge Function，用 service_role）
 export async function provisionMember(tripId, { display_name, username, password, color }) {
   const { data, error } = await supabase.functions.invoke("admin-users", {
@@ -49,15 +42,6 @@ export async function provisionMember(tripId, { display_name, username, password
     try { const j = await error.context?.json(); if (j?.error) detail = j.error; } catch { /* ignore */ }
     throw new Error(detail);
   }
-  return data;
-}
-
-// 管理員預建一個成員名字（舊：行程碼模式；保留未用）
-export async function addMember(tripId, name, color) {
-  const { data, error } = await supabase.rpc("add_member", {
-    p_trip_id: tripId, p_name: name, p_color: color,
-  });
-  if (error) throw error;
   return data;
 }
 
@@ -116,17 +100,6 @@ export async function adminAction(action, payload = {}) {
     throw new Error(detail);
   }
   return data;
-}
-
-// 以行程碼加入；已是成員則更新名字/顏色
-export async function joinTrip({ code, name, color }) {
-  const { data, error } = await supabase.rpc("join_trip", {
-    p_code: code,
-    p_name: name,
-    p_color: color,
-  });
-  if (error) throw error;
-  return data; // trips row
 }
 
 export async function getTrip(id) {

@@ -2,9 +2,11 @@
 -- 日本旅遊規劃系統 — 資料庫 Schema（Postgres / Supabase）
 -- 在 Supabase Dashboard → SQL Editor 貼上整份執行即可（可重複執行）。
 --
--- 安全模型：共用「行程碼」加入；背後用 Supabase 匿名登入(auth.uid)綁定成員，
+-- 安全模型：Email/密碼帳號制（管理員建立成員帳號並指派行程），auth.uid() 綁定成員，
 -- 由 RLS 確保「只有該行程的成員」能讀寫該行程的資料。
--- 加入/建立行程一律走 SECURITY DEFINER 的 RPC，避免把所有 trips 暴露出去。
+-- 建立行程走 SECURITY DEFINER 的 RPC，避免把所有 trips 暴露出去。
+-- 所有 policy 一律 `to authenticated`：未登入的 anon 不該碰到 public schema 的任何東西
+-- （登入/註冊走 GoTrue 的 /auth/v1/*，不經 anon 的 SQL 權限）。
 -- =============================================================================
 
 -- 需要產生隨機行程碼
@@ -206,6 +208,7 @@ $$;
 create or replace function public.gen_trip_code()
 returns text
 language plpgsql
+set search_path = public
 as $$
 declare
   alphabet text := 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -291,62 +294,6 @@ begin
 end;
 $$;
 
--- 以行程碼加入。名字即身份：若該行程已有同名成員，就把此名字「認領」到目前裝置
--- （不再新增重複的人）；否則沿用目前裝置在本行程的身份改名，或新增成員。回傳該 trip。
-create or replace function public.join_trip(
-  p_code  text,
-  p_name  text,
-  p_color text default '#5E7C58'
-)
-returns public.trips
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  v_trip     public.trips;
-  v_existing public.members;
-  v_name     text;
-begin
-  if auth.uid() is null then
-    raise exception 'not authenticated';
-  end if;
-
-  v_name := nullif(trim(p_name), '');
-  if v_name is null then
-    raise exception 'name required';
-  end if;
-
-  select * into v_trip from public.trips where code = upper(trim(p_code));
-  if not found then
-    raise exception 'trip code not found';
-  end if;
-
-  select * into v_existing from public.members
-   where trip_id = v_trip.id and lower(display_name) = lower(v_name)
-   limit 1;
-
-  if found then
-    -- 認領既有同名成員：先移除目前裝置在本行程的其他身份，避免重複
-    delete from public.members
-     where trip_id = v_trip.id and auth_uid = auth.uid() and id <> v_existing.id;
-    update public.members
-       set auth_uid = auth.uid(), color = coalesce(p_color, color)
-     where id = v_existing.id;
-  elsif exists (select 1 from public.members where trip_id = v_trip.id and auth_uid = auth.uid()) then
-    -- 目前裝置已在本行程：改名
-    update public.members
-       set display_name = v_name, color = coalesce(p_color, color)
-     where trip_id = v_trip.id and auth_uid = auth.uid();
-  else
-    insert into public.members (trip_id, auth_uid, display_name, color)
-    values (v_trip.id, auth.uid(), v_name, coalesce(p_color, '#5E7C58'));
-  end if;
-
-  return v_trip;
-end;
-$$;
-
 -- 目前登入者是否為某行程的管理員
 create or replace function public.is_trip_admin(p_trip_id uuid)
 returns boolean
@@ -357,37 +304,6 @@ as $$
     select 1 from public.members m
     where m.trip_id = p_trip_id and m.auth_uid = auth.uid() and m.is_admin
   );
-$$;
-
--- 管理員預建一個成員名字（尚未登入，auth_uid = null）
-create or replace function public.add_member(
-  p_trip_id uuid,
-  p_name    text,
-  p_color   text default '#5E7C58'
-)
-returns public.members
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  v_member public.members;
-  v_name   text;
-begin
-  if not public.is_trip_admin(p_trip_id) then
-    raise exception 'admin only';
-  end if;
-  v_name := nullif(trim(p_name), '');
-  if v_name is null then raise exception 'name required'; end if;
-  if exists (select 1 from public.members m
-             where m.trip_id = p_trip_id and lower(m.display_name) = lower(v_name)) then
-    raise exception 'name exists';
-  end if;
-  insert into public.members (trip_id, auth_uid, display_name, color, is_admin)
-  values (p_trip_id, null, v_name, coalesce(p_color, '#5E7C58'), false)
-  returning * into v_member;
-  return v_member;
-end;
 $$;
 
 -- 指定某成員為行程管理員（單一管理員：同行程其他人取消 is_admin）。
@@ -438,19 +354,29 @@ begin
 end;
 $$;
 
--- 用行程碼取得名單（登入畫面挑名字用；免先成為成員）
-create or replace function public.get_roster(p_code text)
-returns table (display_name text, color text, claimed boolean, is_admin boolean)
-language sql
-security definer
-set search_path = public
-as $$
-  select m.display_name, m.color, (m.auth_uid is not null) as claimed, m.is_admin
-  from public.members m
-  join public.trips t on t.id = m.trip_id
-  where t.code = upper(trim(p_code))
-  order by m.is_admin desc, m.created_at asc;
-$$;
+-- -----------------------------------------------------------------------------
+-- 舊「行程碼加入」模式的殘留，改成帳號制後前端已無任何呼叫端，一併移除以縮小 API 面積。
+-- 其中 get_roster 完全沒有授權檢查：猜到 6 碼行程碼就能拿到整份成員名單，一定要拔掉。
+-- -----------------------------------------------------------------------------
+drop function if exists public.get_roster(text);
+drop function if exists public.add_member(uuid, text, text);
+drop function if exists public.join_trip(text, text, text);
+
+-- -----------------------------------------------------------------------------
+-- 函式權限：預設 PostgREST 會把 public schema 的函式全部曝成 /rest/v1/rpc/*，
+-- 且 anon / authenticated 預設都有 EXECUTE。這裡收斂到實際需要的範圍。
+-- -----------------------------------------------------------------------------
+
+-- anon（未登入）不需要呼叫 public schema 的任何函式：
+-- 登入/註冊走 GoTrue 的 /auth/v1/*，不經 anon 的 SQL 權限。
+revoke execute on all functions in schema public from anon;
+-- 之後新增的函式也預設不給 anon
+alter default privileges in schema public revoke execute on functions from anon;
+
+-- handle_new_user 是 auth.users 的 trigger 函式，不該能被當 RPC 呼叫。
+-- （trigger 觸發不看呼叫者的 EXECUTE，是以 table owner supabase_auth_admin 的脈絡跑，
+--   所以收掉這個權限不影響建立帳號。）
+revoke execute on function public.handle_new_user() from anon, authenticated;
 
 -- -----------------------------------------------------------------------------
 -- Row Level Security
@@ -469,68 +395,85 @@ alter table public.fx_cache        enable row level security;
 -- profiles：本人可讀自己；管理員可讀全部（列成員帳號用）。
 drop policy if exists profiles_self on public.profiles;
 create policy profiles_self on public.profiles for select
+  to authenticated
   using (id = auth.uid() or public.is_admin());
 
 -- trips：成員可讀；全域 admin 唯讀可視（即使不參加也看得到）；可編輯成員可改設定；
 -- 建立走 RPC，不開放直接 INSERT。
 drop policy if exists trips_select on public.trips;
 create policy trips_select on public.trips for select
+  to authenticated
   using (public.is_trip_member(id) or public.is_admin());
 drop policy if exists trips_update on public.trips;
 create policy trips_update on public.trips for update
+  to authenticated
   using (public.is_trip_editor(id)) with check (public.is_trip_editor(id));
 drop policy if exists trips_delete on public.trips;
 create policy trips_delete on public.trips for delete
+  to authenticated
   using (public.is_admin());           -- 僅管理員可刪除整趟（cascade 連帶清掉項目/記帳）
 
 -- trip_currencies：成員/admin 可讀；可編輯成員可增減幣別。
 drop policy if exists tc_select on public.trip_currencies;
 create policy tc_select on public.trip_currencies for select
+  to authenticated
   using (public.is_trip_member(trip_id) or public.is_admin());
 drop policy if exists tc_all on public.trip_currencies;
 create policy tc_all on public.trip_currencies for all
+  to authenticated
   using (public.is_trip_editor(trip_id)) with check (public.is_trip_editor(trip_id));
 
--- members：同行程成員/admin 可讀；只能改/刪自己的列；加入走 RPC。
+-- members：同行程成員/admin 可讀；只能改/刪自己的列；成員由管理員經 admin-users 建立。
 drop policy if exists members_select on public.members;
 create policy members_select on public.members for select
+  to authenticated
   using (public.is_trip_member(trip_id) or public.is_admin());
 drop policy if exists members_update_own on public.members;
 create policy members_update_own on public.members for update
+  to authenticated
   using (auth_uid = auth.uid()) with check (auth_uid = auth.uid());
 drop policy if exists members_delete_own on public.members;
 create policy members_delete_own on public.members for delete
+  to authenticated
   using (auth_uid = auth.uid());
 -- 管理員可管理（改名/移除）同行程任何成員
 drop policy if exists members_admin_update on public.members;
 create policy members_admin_update on public.members for update
+  to authenticated
   using (public.is_trip_admin(trip_id)) with check (public.is_trip_admin(trip_id));
 drop policy if exists members_admin_delete on public.members;
 create policy members_admin_delete on public.members for delete
+  to authenticated
   using (public.is_trip_admin(trip_id));
 
 -- itinerary / expenses：成員/admin 可讀；可編輯成員可寫。
 drop policy if exists itinerary_select on public.itinerary_items;
 create policy itinerary_select on public.itinerary_items for select
+  to authenticated
   using (public.is_trip_member(trip_id) or public.is_admin());
 drop policy if exists itinerary_all on public.itinerary_items;
 create policy itinerary_all on public.itinerary_items for all
+  to authenticated
   using (public.is_trip_editor(trip_id)) with check (public.is_trip_editor(trip_id));
 
 drop policy if exists expenses_select on public.expenses;
 create policy expenses_select on public.expenses for select
+  to authenticated
   using (public.is_trip_member(trip_id) or public.is_admin());
 drop policy if exists expenses_all on public.expenses;
 create policy expenses_all on public.expenses for all
+  to authenticated
   using (public.is_trip_editor(trip_id)) with check (public.is_trip_editor(trip_id));
 
 -- expense_splits：依母 expense 的行程判斷（讀：成員/admin；寫：可編輯成員）。
 drop policy if exists splits_select on public.expense_splits;
 create policy splits_select on public.expense_splits for select
+  to authenticated
   using (exists (select 1 from public.expenses e
                  where e.id = expense_id and (public.is_trip_member(e.trip_id) or public.is_admin())));
 drop policy if exists splits_all on public.expense_splits;
 create policy splits_all on public.expense_splits for all
+  to authenticated
   using (exists (select 1 from public.expenses e
                  where e.id = expense_id and public.is_trip_editor(e.trip_id)))
   with check (exists (select 1 from public.expenses e
@@ -539,18 +482,23 @@ create policy splits_all on public.expense_splits for all
 -- packing_items：成員/admin 可讀；可編輯成員可寫。
 drop policy if exists packing_select on public.packing_items;
 create policy packing_select on public.packing_items for select
+  to authenticated
   using (public.is_trip_member(trip_id) or public.is_admin());
 drop policy if exists packing_all on public.packing_items;
 create policy packing_all on public.packing_items for all
+  to authenticated
   using (public.is_trip_editor(trip_id)) with check (public.is_trip_editor(trip_id));
 
 -- fx_cache：所有登入者可讀寫（純快取，非機密）。
+-- `to authenticated` 已經表達了原本 auth.role() = 'authenticated' 的意思，不必重複判斷。
 drop policy if exists fx_select on public.fx_cache;
 create policy fx_select on public.fx_cache for select
-  using (auth.role() = 'authenticated');
+  to authenticated
+  using (true);
 drop policy if exists fx_insert on public.fx_cache;
 create policy fx_insert on public.fx_cache for insert
-  with check (auth.role() = 'authenticated');
+  to authenticated
+  with check (true);
 
 -- -----------------------------------------------------------------------------
 -- Realtime（即時多人同步）
