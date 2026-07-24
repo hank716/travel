@@ -160,6 +160,7 @@ function show(view) {
 function openTripModal() {
   showError("");
   $("#tripModal").hidden = false;
+  syncDateFaces($("#tripModal"));   // 要在顯示之後才量得到寬度
 }
 function closeTripModal() { $("#tripModal").hidden = true; }
 
@@ -575,6 +576,7 @@ function openTripEdit(trip) {
   f.start.value = trip.start_date || "";
   f.end.value = trip.end_date || "";
   $("#tripEditModal").hidden = false;
+  syncDateFaces($("#tripEditModal"));
 }
 async function onTripEditSubmit(e) {
   e.preventDefault();
@@ -1007,6 +1009,52 @@ function buildMapUrl(items) {
   return "https://www.google.com/maps/dir/" + pts.map(encodeURIComponent).join("/");
 }
 
+// ---------- 日期欄位（原生日曆 + 自畫的 YYYY-MM-DD） ----------
+// input[type=date] 跟 type=time 一樣，顯示格式吃瀏覽器語言：英文 locale 會畫成
+// 08/03/2026，分不出 8月3日還是 3月8日（lang 屬性無效，實測過）。但日曆彈窗本身
+// 好用，尤其手機，所以留著原生欄位，只把它的文字設成透明再蓋上自己的顯示層。
+const WEEKDAY = ["日", "一", "二", "三", "四", "五", "六"];
+
+function formatDateFace(v) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v || "");
+  if (!m) return "";
+  // 用本地時間建構，避免 new Date("2026-08-03") 被當 UTC 午夜而在 UTC- 時區倒退一天
+  const d = new Date(+m[1], +m[2] - 1, +m[3]);
+  return `${v}（週${WEEKDAY[d.getDay()]}）`;
+}
+
+// 把某個範圍內所有日期欄位的顯示層更新成目前的值。
+// 程式指派 .value 不會觸發 input/change，所以開 modal 時要自己叫一次。
+function syncDateFaces(root) {
+  // root 可能是容器（modal / form / document），也可能就是 .date-pick 本身
+  const picks = root.matches?.(".date-pick") ? [root] : root.querySelectorAll(".date-pick");
+  picks.forEach((w) => {
+    const face = w.querySelector(".date-pick-face");
+    const v = w.querySelector("input").value;
+    const txt = formatDateFace(v);
+    face.textContent = txt || "未設定";
+    face.dataset.empty = txt ? "false" : "true";
+    // 手機上雙欄的日期欄位塞不下星期，塞不下就只留日期（日期本身才是重點）
+    if (txt && face.scrollWidth > face.clientWidth) face.textContent = v;
+  });
+}
+
+function initDatePicks() {
+  if (typeof HTMLInputElement.prototype.showPicker !== "function") return; // 不支援就維持原生樣子
+  document.documentElement.classList.add("has-showpicker");
+  document.querySelectorAll(".date-pick").forEach((w) => {
+    const input = w.querySelector("input");
+    input.addEventListener("input", () => syncDateFaces(w));
+    input.addEventListener("change", () => syncDateFaces(w));
+    w.addEventListener("click", () => {
+      try { input.showPicker(); } catch { input.focus(); }
+    });
+  });
+  // form.reset() 之後值會變，但沒有 input 事件；reset 的預設動作在事件之後才跑
+  document.addEventListener("reset", (e) => setTimeout(() => syncDateFaces(e.target), 0), true);
+  syncDateFaces(document);
+}
+
 // ---------- 時間選擇（時 / 分 兩個 select） ----------
 // 原生 <input type="time"> 的顯示格式吃「瀏覽器語言」而非本頁 lang，英文 locale
 // 會把 19:00 畫成 07:00 PM（存進 DB 的值其實是對的，但看起來像選錯）。HTML/CSS
@@ -1069,6 +1117,7 @@ function openItemModal(item) {
     setTimeValue(f.end_h, f.end_m, "");
   }
   $("#itemModal").hidden = false;
+  syncDateFaces($("#itemModal"));
 }
 
 function closeItemModal() { $("#itemModal").hidden = true; }
@@ -1226,6 +1275,7 @@ function openExpenseModal(exp) {
   renderSplitChips();
   updateSplitHint();
   $("#expenseModal").hidden = false;
+  syncDateFaces($("#expenseModal"));
 }
 
 function closeExpenseModal() { $("#expenseModal").hidden = true; }
@@ -1625,6 +1675,7 @@ async function onDeleteTrip(id, title) {
 async function boot() {
   show("bootView");
   buildJoinView();
+  initDatePicks();
 
   // 登入
   $("#loginForm").addEventListener("submit", onLoginSubmit);

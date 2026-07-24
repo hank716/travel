@@ -132,6 +132,26 @@ input, select, textarea {
 .form .row { display: flex; gap: 12px; flex-wrap: wrap; }
 .form .row label { flex: 1 1 140px; } /* 太窄就自動換成單欄 */
 
+/* 日期欄位：原生 input[type=date] 同樣照瀏覽器語言畫（英文 locale → 08/03/2026，
+   到底是 8/3 還是 3/8 看不出來）。保留原生欄位與日曆彈窗，只把它畫出來的文字蓋掉，
+   換成我們自己的 YYYY-MM-DD（週X）。整塊可點，由 JS 呼叫 showPicker() 開日曆。
+   .has-showpicker 由 JS 在偵測到瀏覽器支援 showPicker() 時掛上；不支援就完全不套用
+   這段樣式，退回原生欄位（格式仍是瀏覽器語言，但至少功能正常）。 */
+.date-pick { position: relative; display: block; }
+.date-pick-face { display: none; }
+.has-showpicker .date-pick > input { color: transparent; cursor: pointer; }
+.has-showpicker .date-pick > input::-webkit-datetime-edit { color: transparent; }
+/* right 留 34px 給原生日曆 icon。用 right 而不是 padding-right，
+   這樣 clientWidth 就等於真正可用的寬度，JS 才能靠它判斷星期塞不塞得下。 */
+.has-showpicker .date-pick-face {
+  display: flex; align-items: center;
+  position: absolute; top: 0; bottom: 0; left: 0; right: 34px;
+  padding-left: 14px;
+  color: var(--ink); pointer-events: none;
+  white-space: nowrap; overflow: hidden;
+}
+.has-showpicker .date-pick-face[data-empty="true"] { color: var(--muted); font-weight: 400; }
+
 /* 自建的 24 小時制時間選擇（時 : 分），取代會被瀏覽器語言畫成 12 小時制的 input[type=time] */
 .time-pick { display: flex; align-items: center; gap: 6px; }
 .time-pick select { flex: 1 1 0; min-width: 0; padding-left: 9px; padding-right: 6px; }

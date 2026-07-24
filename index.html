@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#FFF4E8" />
   <title>旅程規劃 · Trip Planner</title>
-  <link rel="stylesheet" href="./css/app.css?v=20260724c" />
+  <link rel="stylesheet" href="./css/app.css?v=20260724d" />
 </head>
 <body>
   <header class="topbar">
@@ -82,8 +82,18 @@
             <input name="title" placeholder="2026 春 東京大阪" maxlength="40" required />
           </label>
           <div class="row">
-            <label>出發日 <input name="start" type="date" /></label>
-            <label>回程日 <input name="end" type="date" /></label>
+            <label>出發日
+              <span class="date-pick">
+                <input name="start" type="date" />
+                <span class="date-pick-face" aria-hidden="true"></span>
+              </span>
+            </label>
+            <label>回程日
+              <span class="date-pick">
+                <input name="end" type="date" />
+                <span class="date-pick-face" aria-hidden="true"></span>
+              </span>
+            </label>
           </div>
           <label>結算基準幣別
             <select name="base"></select>
@@ -329,7 +339,12 @@
               </select>
             </label>
           </div>
-          <label>日期 <input name="spent_at" type="date" /></label>
+          <label>日期
+            <span class="date-pick">
+              <input name="spent_at" type="date" />
+              <span class="date-pick-face" aria-hidden="true"></span>
+            </span>
+          </label>
           <label>分攤給（均分，點選加入／移除）
             <div id="splitMembers" class="chip-pick"></div>
           </label>
@@ -356,7 +371,12 @@
             <input name="title" placeholder="淺草寺、一蘭拉麵…" maxlength="60" required />
           </label>
           <div class="row">
-            <label>日期 <input name="day_date" type="date" /></label>
+            <label>日期
+              <span class="date-pick">
+                <input name="day_date" type="date" />
+                <span class="date-pick-face" aria-hidden="true"></span>
+              </span>
+            </label>
             <label>分類
               <select name="category">
                 <option value="景點">景點</option>
@@ -440,8 +460,18 @@
           <input type="hidden" name="id" />
           <label>行程名稱 <input name="title" maxlength="40" required /></label>
           <div class="row">
-            <label>出發日 <input name="start" type="date" /></label>
-            <label>回程日 <input name="end" type="date" /></label>
+            <label>出發日
+              <span class="date-pick">
+                <input name="start" type="date" />
+                <span class="date-pick-face" aria-hidden="true"></span>
+              </span>
+            </label>
+            <label>回程日
+              <span class="date-pick">
+                <input name="end" type="date" />
+                <span class="date-pick-face" aria-hidden="true"></span>
+              </span>
+            </label>
           </div>
           <button class="btn" type="submit">儲存</button>
           <p id="tripEditError" class="status" data-ok="false" hidden></p>
@@ -597,7 +627,7 @@
 
   <div id="toast" class="toast" hidden></div>
 
-  <script src="./config.js?v=20260724c"></script>
-  <script type="module" src="./js/app.js?v=20260724c"></script>
+  <script src="./config.js?v=20260724d"></script>
+  <script type="module" src="./js/app.js?v=20260724d"></script>
 </body>
 </html>
