@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#FFF4E8" />
   <title>旅程規劃 · Trip Planner</title>
-  <link rel="stylesheet" href="./css/app.css?v=20260725a" />
+  <link rel="stylesheet" href="./css/app.css?v=20260725b" />
 </head>
 <body>
   <header class="topbar">
@@ -201,7 +201,7 @@
             <h2 class="card-title">行程規劃</h2>
             <div style="display:flex; gap:8px;">
               <button id="clearItinBtn" class="btn btn--ghost btn--sm" type="button" hidden>🗑️ 清空</button>
-              <button id="aiItinBtn" class="btn btn--ghost btn--sm" type="button">✨ AI 建議</button>
+              <button id="aiItinBtn" class="btn btn--ghost btn--sm" type="button">✨ AI 助手</button>
               <button id="addItemBtn" class="btn btn--sm" type="button">＋ 新增項目</button>
             </div>
           </div>
@@ -480,23 +480,23 @@
       </div>
     </div>
 
-    <!-- AI 建議行程 Modal -->
+    <!-- AI 助手（對話式排／改行程）Modal -->
     <div id="aiItinModal" class="modal" hidden>
-      <div class="modal-box card">
+      <div class="modal-box modal-box--chat card">
         <div class="card-head">
-          <h2 class="card-title">✨ AI 建議行程</h2>
-          <button id="aiItinClose" class="btn btn--ghost btn--sm" type="button">✕</button>
+          <h2 class="card-title">✨ AI 助手</h2>
+          <div class="ai-chat-head">
+            <select id="aiItinDay" class="ai-chat-scope"></select>
+            <button id="aiItinClose" class="btn btn--ghost btn--sm" type="button">✕</button>
+          </div>
         </div>
-        <label style="display:block; font-size:14px; font-weight:600; color:var(--muted); margin-bottom:10px;">規劃範圍
-          <select id="aiItinDay" style="margin-top:6px;"></select>
-        </label>
-        <textarea id="aiItinPrefs" class="ai-itin-input" rows="6"
-          placeholder="偏好（美食、文化、親子…），或直接貼上你整理好的資料（支援 Markdown，例如某一天的景點/餐廳清單）。留空也可以。"></textarea>
-        <div class="row" style="justify-content:flex-end; margin:10px 0;">
-          <button id="aiItinGo" class="btn btn--sm" type="button">產生</button>
+        <div id="aiChatLog" class="ai-chat-log"></div>
+        <div class="ai-chat-input">
+          <textarea id="aiChatInput" class="ai-itin-input" rows="2"
+            placeholder="說說你想怎麼改…（Enter 送出、Shift+Enter 換行）"></textarea>
+          <button id="aiChatSend" class="btn btn--sm" type="button">送出</button>
         </div>
-        <p class="status">選「指定某天」時，AI 只會規劃那一天、不動其他天。貼上已整理的資料時 AI 會優先據此排。</p>
-        <div id="aiItinOut" class="itinerary-list" style="margin-top:10px;"></div>
+        <p class="status ai-chat-hint">AI 提出的變更會先列成清單，你確認後才會寫入行程。</p>
       </div>
     </div>
 
@@ -628,7 +628,7 @@
 
   <div id="toast" class="toast" hidden></div>
 
-  <script src="./config.js?v=20260725a"></script>
-  <script type="module" src="./js/app.js?v=20260725a"></script>
+  <script src="./config.js?v=20260725b"></script>
+  <script type="module" src="./js/app.js?v=20260725b"></script>
 </body>
 </html>

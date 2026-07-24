@@ -340,6 +340,34 @@ body.in-trip .tabbar { display: flex; }
 .ai-itin-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
 .itin-time small { display: block; font-weight: 600; color: var(--muted); font-size: 11px; }
 
+/* ---------- AI 助手（對話式排／改行程） ---------- */
+.ai-chat-head { display: flex; align-items: center; gap: 8px; }
+.ai-chat-scope { width: auto; max-width: 46vw; padding: 6px 10px; font-size: 13px; }
+/* 對話串吃掉剩餘高度，輸入列永遠釘在底部 */
+.ai-chat-log { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 4px 2px; margin: 4px -2px; }
+.ai-chat-input { display: flex; align-items: flex-end; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
+.ai-chat-input .ai-itin-input { flex: 1; min-height: 0; }
+.ai-chat-input .btn { flex-shrink: 0; }
+.ai-chat-hint { margin: 6px 0 0; font-size: 12px; }
+
+.ai-msg { max-width: 88%; padding: 10px 14px; border-radius: var(--radius-sm); line-height: 1.7; white-space: pre-wrap; word-break: break-word; }
+.ai-msg--user { align-self: flex-end; background: var(--accent-soft); color: var(--ink); }
+.ai-msg--ai { align-self: flex-start; background: var(--bg-soft); border: 1px solid var(--line); }
+.ai-msg--ai[data-ok="false"] { color: var(--accent-dark); border-color: var(--accent-dark); }
+.ai-msg-eg { margin-top: 8px; font-size: 13px; color: var(--muted); }
+.ai-msg-eg b { display: block; font-weight: 700; color: var(--ink); margin-bottom: 2px; }
+
+/* 變更預覽卡 */
+.ai-ops { align-self: stretch; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg-soft); padding: 10px 12px; }
+.ai-ops[data-done="true"] { opacity: .65; }
+.ai-op { display: flex; align-items: flex-start; gap: 8px; padding: 7px 0; font-size: 14px; line-height: 1.6; border-bottom: 1px solid var(--line); }
+.ai-op:last-of-type { border-bottom: 0; }
+.ai-op input[type="checkbox"] { width: auto; margin: 5px 0 0; flex-shrink: 0; }
+.ai-op-txt { min-width: 0; word-break: break-word; }
+.ai-op-txt small { display: block; color: var(--muted); font-size: 12px; }
+.ai-op[data-kind="delete"] .ai-op-txt { color: var(--accent-dark); }
+.ai-ops-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+
 /* ---------- 管理頁 ---------- */
 .admin-list { display: flex; flex-direction: column; gap: 10px; }
 .admin-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; background: var(--bg-soft); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 12px 14px; flex-wrap: wrap; }
@@ -379,6 +407,11 @@ body.in-trip .tabbar { display: flex; }
 .modal[hidden] { display: none; }
 .modal-box { width: min(480px, 100%); max-height: 90vh; overflow-y: auto; }
 .modal-box textarea { resize: vertical; }
+/* 對話視窗：固定高度、內部自己捲，讓輸入列不會被長對話推出畫面 */
+.modal-box--chat { width: min(560px, 100%); height: min(78vh, 700px); overflow: hidden; display: flex; flex-direction: column; }
+@media (max-width: 520px) {
+  .modal-box--chat { height: 100%; }
+}
 
 /* ---------- Toast ---------- */
 .toast { position: fixed; left: 50%; bottom: calc(84px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 120; background: var(--ink); color: #fff; font-weight: 700; font-size: 14px; padding: 11px 18px; border-radius: 999px; box-shadow: var(--shadow); max-width: calc(100vw - 32px); text-align: center; }

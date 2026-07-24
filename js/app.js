@@ -699,19 +699,297 @@ async function onLoggedIn() {
   applyAccountUI();
 }
 
-// ---------- AI 建議行程 ----------
-function openAiItin() {
+// ---------- AI 助手（對話式排／改行程） ----------
+// 對話只活在視窗開著的期間，關掉就清空（不進資料庫，也不佔 Supabase 額度）。
+let aiChat = { history: [], busy: false };
+
+const AI_EXAMPLES = [
+  "第二天太趕了，午餐後多留一小時",
+  "刪掉所有購物行程",
+  "幫我排第三天，想吃在地美食",
+];
+
+function openAiAssistant() {
   if (!guardEdit()) return;
-  $("#aiItinOut").innerHTML = "";
-  $("#aiItinPrefs").value = "";
-  // 規劃範圍：整趟 + 每一天。預設帶入目前正在看的那一天，避免一次蓋掉整趟。
+  aiChat = { history: [], busy: false };
+  $("#aiChatInput").value = "";
+  $("#aiChatSend").disabled = false;
+  // 編輯範圍：整趟 + 每一天。預設帶入目前正在看的那一天，避免一次動到整趟。
   const days = tripDayRange();
   const sel = $("#aiItinDay");
   sel.innerHTML = `<option value="">整趟（所有日期）</option>` +
     days.map((d) => `<option value="${d}">${dayLabel(d)}</option>`).join("");
   sel.value = (state.activeDay && days.includes(state.activeDay)) ? state.activeDay : "";
+  $("#aiChatLog").innerHTML =
+    `<div class="ai-msg ai-msg--ai">用說的就能排行程、改行程 —— 改時間、刪項目、加景點都可以。
+       <div class="ai-msg-eg"><b>例如：</b>${AI_EXAMPLES.map((e) => `「${escapeHtml(e)}」`).join("<br>")}</div>
+     </div>`;
   $("#aiItinModal").hidden = false;
+  // 手機上自動 focus 會直接彈鍵盤把對話擠掉，只在桌機做
+  if (window.innerWidth > 520) $("#aiChatInput").focus();
 }
+
+function closeAiAssistant() {
+  $("#aiItinModal").hidden = true;
+  $("#aiChatLog").innerHTML = "";
+  aiChat = { history: [], busy: false };
+}
+
+// 對話泡泡。一律 textContent，不碰 innerHTML。
+function aiChatPush(role, text, ok = true) {
+  const log = $("#aiChatLog");
+  const el = document.createElement("div");
+  el.className = `ai-msg ai-msg--${role === "user" ? "user" : "ai"}`;
+  if (!ok) el.dataset.ok = "false";
+  el.textContent = text;
+  log.appendChild(el);
+  log.scrollTop = log.scrollHeight;
+  return el;
+}
+
+async function onAiChatSend() {
+  if (aiChat.busy || !guardEdit()) return;
+  const input = $("#aiChatInput");
+  const message = input.value.trim();
+  if (!message) return;
+  input.value = "";
+  aiChatPush("user", message);
+
+  aiChat.busy = true;
+  const sendBtn = $("#aiChatSend");
+  sendBtn.disabled = true;
+  const bubble = aiChatPush("ai", "思考中…");
+  // 開關視窗會換掉整個 aiChat 物件。抓著這一輪的參照，回應太慢時才不會把
+  // 上一場對話的結果貼進新的對話裡。
+  const session = aiChat;
+  try {
+    const scope = $("#aiItinDay").value;   // 空 = 整趟
+    // 每輪都重抓最新快照：多人即時同步下，畫面上的資料可能已經過期
+    const all = await listItems(state.trip.id);
+    const scoped = scope ? all.filter((i) => i.day_date === scope) : all;
+
+    // 只把短代號交給模型，UUID 留在前端。模型指錯代號時對照不到 → 那條 op 直接丟掉。
+    const refMap = new Map();
+    const items = scoped.map((it, idx) => {
+      const ref = `#${idx + 1}`;
+      refMap.set(ref, it);
+      return {
+        ref,
+        day_date: it.day_date || "",
+        start_time: (it.start_time || "").slice(0, 5),
+        end_time: (it.end_time || "").slice(0, 5),
+        title: it.title,
+        category: it.category || "",
+        location_name: it.location_name || "",
+        note: it.notes || "",
+      };
+    });
+
+    let days = tripDayRange();
+    if (!days.length) days = [...new Set(all.map((i) => i.day_date).filter(Boolean))];
+    if (scope) days = [scope];
+
+    const { reply, ops: raw } = await callAI("edit_itinerary", {
+      trip: { title: state.trip.title, start: state.trip.start_date, end: state.trip.end_date },
+      scope, days, items,
+      history: aiChat.history.slice(-6),   // 只帶文字，讓「再早一點」這種指代接得上
+      message,
+    });
+
+    if (aiChat !== session) return;   // 這場對話已經被關掉了，結果直接丟棄
+    const ops = validateOps(raw, refMap, scope, days);
+    bubble.textContent = reply
+      || (ops.length ? "我調整了以下項目：" : "我不太確定你想怎麼改，可以再說得具體一點嗎？");
+    if (ops.length) renderOpsCard(ops);
+    session.history.push({ role: "user", text: message }, { role: "ai", text: reply || "" });
+  } catch (e) {
+    if (aiChat !== session) return;
+    bubble.textContent = humanError(e);
+    bubble.dataset.ok = "false";
+  } finally {
+    session.busy = false;
+    if (aiChat === session) {
+      sendBtn.disabled = false;
+      $("#aiChatLog").scrollTop = $("#aiChatLog").scrollHeight;
+    }
+  }
+}
+
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+const OP_FIELDS = ["day_date", "start_time", "end_time", "title", "category", "location_name", "note"];
+const OP_FIELD_LABEL = {
+  day_date: "日期", start_time: "開始", end_time: "結束",
+  title: "名稱", category: "分類", location_name: "地點", note: "備註",
+};
+
+// 資料庫欄位 → AI 用的欄位名（note ↔ notes）；時間統一切成 HH:MM 才比對得起來
+function curOf(item, k) {
+  if (k === "note") return item.notes || "";
+  if (k === "start_time" || k === "end_time") return (item[k] || "").slice(0, 5);
+  return item[k] || "";
+}
+
+// 前端最後一道防線。模型可能指到不存在的代號、跑到範圍外的日期、給壞掉的時間，
+// 一律在這裡丟掉 —— 寧可少做一項，也不要改錯別人的資料。
+function validateOps(raw, refMap, scope, days) {
+  const okDay = (d) => (scope ? d === scope : days.includes(d));
+  const out = [];
+  for (const o of Array.isArray(raw) ? raw : []) {
+    if (!o || typeof o !== "object") continue;
+    const item = refMap.get(String(o.ref ?? "").trim());
+
+    if (o.op === "delete") {
+      if (item) out.push({ op: "delete", item });
+      continue;
+    }
+
+    if (o.op === "update") {
+      if (!item) continue;
+      const src = o.fields && typeof o.fields === "object" ? o.fields : {};
+      const fields = {};
+      for (const k of OP_FIELDS) {
+        if (!(k in src)) continue;
+        const v = src[k] == null ? "" : String(src[k]).trim();
+        if ((k === "start_time" || k === "end_time") && v && !HHMM.test(v)) continue;
+        if (k === "day_date" && !okDay(v)) continue;   // 含空字串：不接受「取消日期」
+        if (k === "title" && !v) continue;             // 不准把標題清空
+        if (v === curOf(item, k)) continue;            // 沒真的變就不列進預覽
+        fields[k] = v;
+      }
+      if (Object.keys(fields).length) out.push({ op: "update", item, fields });
+      continue;
+    }
+
+    if (o.op === "create") {
+      const it = (o.item && typeof o.item === "object") ? o.item : (o.fields || {});
+      const title = String(it.title ?? "").trim();
+      if (!title) continue;
+      let day = String(it.day_date ?? "").trim();
+      if (scope) day = scope;                 // 單日範圍：一律綁在那天
+      else if (!okDay(day)) day = "";
+      const st = String(it.start_time ?? "").trim();
+      const et = String(it.end_time ?? "").trim();
+      out.push({
+        op: "create",
+        fields: {
+          day_date: day,
+          start_time: HHMM.test(st) ? st : "",
+          end_time: HHMM.test(et) ? et : "",
+          title,
+          category: String(it.category ?? "").trim(),
+          location_name: String(it.location_name ?? "").trim(),
+          note: String(it.note ?? it.notes ?? "").trim(),
+        },
+      });
+    }
+  }
+  return out;
+}
+
+// 「08-01 13:30~15:00」這種時間標籤，刪除/新增的預覽列用
+function opWhen(o) {
+  const d = o.day_date ? String(o.day_date).slice(5) : "";
+  const t = o.start_time
+    ? String(o.start_time).slice(0, 5) + (o.end_time ? `~${String(o.end_time).slice(0, 5)}` : "")
+    : "";
+  return [d, t].filter(Boolean).join(" ") || "未排定";
+}
+
+// 變更預覽卡：每列一條變更，預設全勾，按了「套用」才真的寫進資料庫。
+function renderOpsCard(ops) {
+  const log = $("#aiChatLog");
+  const card = document.createElement("div");
+  card.className = "ai-ops";
+  card.innerHTML = ops.map((o, idx) => {
+    let kind, txt;
+    if (o.op === "delete") {
+      kind = "delete";
+      txt = `🗑️ ${escapeHtml(o.item.title)}<small>${escapeHtml(opWhen(o.item))} · 刪除</small>`;
+    } else if (o.op === "update") {
+      kind = "update";
+      const diffs = Object.entries(o.fields)
+        .map(([k, v]) => `${OP_FIELD_LABEL[k] || k}：${escapeHtml(curOf(o.item, k) || "（空）")} → ${escapeHtml(v || "（空）")}`)
+        .join("　");
+      txt = `✏️ ${escapeHtml(o.item.title)}<small>${diffs}</small>`;
+    } else {
+      kind = "create";
+      const f = o.fields;
+      const meta = [opWhen(f), f.category, f.location_name].filter(Boolean).join(" · ");
+      txt = `➕ ${escapeHtml(f.title)}<small>${escapeHtml(meta)} · 新增</small>`;
+    }
+    return `<label class="ai-op" data-kind="${kind}">
+        <input type="checkbox" data-op="${idx}" checked />
+        <span class="ai-op-txt">${txt}</span>
+      </label>`;
+  }).join("") +
+    `<div class="ai-ops-foot"><button class="btn btn--sm" type="button" data-apply></button></div>`;
+  log.appendChild(card);
+
+  const applyBtn = card.querySelector("[data-apply]");
+  const boxes = [...card.querySelectorAll("[data-op]")];
+  const sync = () => {
+    const n = boxes.filter((b) => b.checked).length;
+    applyBtn.textContent = n ? `套用勾選的 ${n} 項` : "沒有勾選任何變更";
+    applyBtn.disabled = !n;
+  };
+  boxes.forEach((b) => (b.onchange = sync));
+  sync();
+  applyBtn.onclick = () => applyOps(ops.filter((_, i) => boxes[i].checked), card, applyBtn);
+  log.scrollTop = log.scrollHeight;
+}
+
+// AI 欄位 → 資料庫欄位。空字串轉 null：date/time 欄位吃不下空字串。
+function updatePatch(o) {
+  const patch = {};
+  for (const [k, v] of Object.entries(o.fields)) {
+    if (k === "note") patch.notes = v || null;
+    else patch[k] = v || null;
+  }
+  // 名稱或地點改了，地圖查詢字串要跟著換，否則地圖還指著舊地點
+  // （addItem 有 map_query 的 fallback，updateItem 沒有，得自己補）
+  if ("title" in o.fields || "location_name" in o.fields) {
+    patch.map_query = o.fields.location_name || o.item.location_name
+      || o.fields.title || o.item.title;
+  }
+  return patch;
+}
+
+function createPayload(f) {
+  return {
+    day_date: f.day_date || null,
+    start_time: f.start_time || null,
+    end_time: f.end_time || null,
+    title: f.title,
+    category: f.category || null,
+    location_name: f.location_name || null,
+    notes: f.note || null,
+  };
+}
+
+// 依 刪除 → 修改 → 新增 的順序套用；單筆失敗不中斷其餘。
+async function applyOps(ops, card, btn) {
+  if (!ops.length || !guardEdit()) return;
+  btn.disabled = true;
+  btn.textContent = "套用中…";
+  const order = { delete: 0, update: 1, create: 2 };
+  let ok = 0, fail = 0;
+  for (const o of [...ops].sort((a, b) => order[a.op] - order[b.op])) {
+    try {
+      if (o.op === "delete") await deleteItem(o.item.id);
+      else if (o.op === "update") await updateItem(o.item.id, updatePatch(o));
+      else await addItem(state.trip.id, createPayload(o.fields), state.me?.id);
+      ok++;
+    } catch { fail++; }
+  }
+  // 套用過就鎖住整張卡，避免同一份變更被按第二次
+  card.dataset.done = "true";
+  card.querySelectorAll("input, button").forEach((el) => (el.disabled = true));
+  btn.textContent = fail ? `已套用 ${ok} 項（${fail} 項失敗）` : `已套用 ${ok} 項`;
+  await renderItinerary(state.trip).catch(() => {});
+  renderDashboard().catch(() => {});
+  toast(fail ? `已套用 ${ok} 項，${fail} 項失敗` : `已套用 ${ok} 項變更`, !fail);
+}
+
 function tripDayRange() {
   const t = state.trip;
   if (!t?.start_date) return [];
@@ -721,86 +999,6 @@ function tripDayRange() {
   while (d <= end) { out.push(ymd(d)); d.setDate(d.getDate() + 1); }
   return out;
 }
-async function onAiItinGo() {
-  const out = $("#aiItinOut");
-  out.innerHTML = `<p class="status">AI 規劃中…</p>`;
-  try {
-    const items = await listItems(state.trip.id);
-    const onlyDay = $("#aiItinDay").value;            // 空 = 整趟
-    let days = onlyDay ? [onlyDay] : tripDayRange();
-    if (!days.length) days = [...new Set(items.map((i) => i.day_date).filter(Boolean))];
-    const area = items.find((i) => i.weather_area)?.weather_area || "";
-    const { items: raw } = await callAI("suggest_itinerary", {
-      trip: { title: state.trip.title, start: state.trip.start_date, end: state.trip.end_date },
-      area, days, only_day: onlyDay || null,
-      existing: items.map((i) => i.title), notes: $("#aiItinPrefs").value.trim(),
-    });
-    // 指定某天時，前端再保險過濾：只留該天（缺日期者補上該天），確保不動到其他天
-    const sug = (Array.isArray(raw) ? raw : []).filter((s) => s && s.title)
-      .filter((s) => !onlyDay || !s.day_date || s.day_date === onlyDay)
-      .map((s) => (onlyDay ? { ...s, day_date: onlyDay } : s));
-    if (!sug.length) { out.innerHTML = `<p class="status">沒有建議，換個偏好再試。</p>`; return; }
-    out.innerHTML = `
-      <div class="ai-itin-bar">
-        <span class="status">AI 建議 ${sug.length} 個項目${onlyDay ? "（僅 " + dayLabel(onlyDay) + "）" : ""}</span>
-        <button class="btn btn--sm" type="button" id="aiAddAll">全部加入行程</button>
-      </div>
-      ${sug.map((s, idx) => `
-      <div class="itin-item">
-        <div class="itin-time">${s.day_date ? s.day_date.slice(5) : "·"}${s.start_time ? `<small>${escapeHtml(s.start_time)}</small>` : ""}</div>
-        <div class="itin-body">
-          <div class="itin-title">${CATEGORY_ICON[s.category] || "•"} ${escapeHtml(s.title || "")} ${s.category ? `<span class="tag">${escapeHtml(s.category)}</span>` : ""}</div>
-          ${s.location_name ? `<div class="status">📍 ${escapeHtml(s.location_name)}</div>` : ""}
-          ${s.note ? `<div class="itin-notes">${escapeHtml(s.note)}</div>` : ""}
-        </div>
-        <div class="itin-actions"><button class="btn btn--ghost btn--sm" data-add="${idx}">加入</button></div>
-      </div>`).join("")}`;
-    $("#aiAddAll").onclick = () => addAllAiItems(sug, $("#aiAddAll"));
-    out.querySelectorAll("[data-add]").forEach((b) => (b.onclick = async () => {
-      try {
-        await addItem(state.trip.id, sugToItem(sug[Number(b.dataset.add)], Number(b.dataset.add)), state.me?.id);
-        b.textContent = "已加入"; b.disabled = true;
-        renderItinerary(state.trip).catch(() => {});
-        renderDashboard().catch(() => {});
-      } catch (e) { toast(humanError(e), false); }
-    }));
-  } catch (e) {
-    out.innerHTML = `<p class="status" data-ok="false">${humanError(e)}</p>`;
-  }
-}
-
-// AI 建議 → 行程項目（盡量帶齊欄位；不確定者留空）
-function sugToItem(s, idx) {
-  return {
-    day_date: s.day_date || null,
-    start_time: s.start_time || null,
-    end_time: s.end_time || null,
-    title: s.title,
-    category: s.category || null,
-    location_name: s.location_name || null,
-    notes: s.note || null,
-    sort_order: idx,
-  };
-}
-
-// 一鍵把整份 AI 建議建立成行程
-async function addAllAiItems(sug, btn) {
-  if (!Array.isArray(sug) || !sug.length) return;
-  const old = btn.textContent; btn.disabled = true; btn.textContent = "加入中…";
-  let ok = 0;
-  for (let i = 0; i < sug.length; i++) {
-    if (!sug[i]?.title) continue;
-    try { await addItem(state.trip.id, sugToItem(sug[i], i), state.me?.id); ok++; }
-    catch { /* 略過單筆失敗，繼續其餘 */ }
-  }
-  await renderItinerary(state.trip).catch(() => {});
-  renderDashboard().catch(() => {});
-  $("#aiItinModal").hidden = true;
-  toast(ok ? `已加入 ${ok} 筆行程` : "沒有可加入的項目", !!ok);
-  if (ok) showPage("itinerary");
-  btn.disabled = false; btn.textContent = old;
-}
-
 // ---------- 記帳語意輸入 ----------
 async function onNlExpense() {
   if (!guardEdit()) return;
@@ -1840,10 +2038,14 @@ async function boot() {
   $("#resetPwModal").addEventListener("click", (e) => { if (e.target.id === "resetPwModal") $("#resetPwModal").hidden = true; });
 
   // AI 建議行程
-  $("#aiItinBtn").onclick = openAiItin;
-  $("#aiItinClose").onclick = () => ($("#aiItinModal").hidden = true);
-  $("#aiItinGo").onclick = onAiItinGo;
-  $("#aiItinModal").addEventListener("click", (e) => { if (e.target.id === "aiItinModal") $("#aiItinModal").hidden = true; });
+  $("#aiItinBtn").onclick = openAiAssistant;
+  $("#aiItinClose").onclick = closeAiAssistant;
+  $("#aiChatSend").onclick = onAiChatSend;
+  // Enter 送出、Shift+Enter 換行（比照記帳的語意輸入框）
+  $("#aiChatInput").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onAiChatSend(); }
+  });
+  $("#aiItinModal").addEventListener("click", (e) => { if (e.target.id === "aiItinModal") closeAiAssistant(); });
 
   // 記帳語意輸入
   $("#nlExpenseBtn").onclick = onNlExpense;

@@ -14,7 +14,7 @@ const CORS = {
 };
 
 // 每次部署遞增。免費方案沒有 log，靠 diag 回傳這個值來確認線上跑的是哪一版。
-const BUILD = "2026-07-24-1";
+const BUILD = "2026-07-25-1";
 
 // Gemini 各世代的 thinking 參數互不相容，傳錯世代 → 400 INVALID_ARGUMENT：
 //   2.5 系列：thinkingConfig.thinkingBudget（0 = 關閉思考）
@@ -213,6 +213,60 @@ function itineraryPrompt(payload: Record<string, unknown>): string {
   ].filter(Boolean).join("\n");
 }
 
+// 對話式編輯行程：讀得到既有項目，能對它們下 update / delete / create。
+// 關鍵：項目用短代號 #1/#2 溝通，絕不把 UUID 交給模型（會幻覺，寫錯就改到別筆）。
+function editItineraryPrompt(payload: Record<string, unknown>): string {
+  const trip = (payload.trip ?? {}) as { title?: string; start?: string; end?: string };
+  const scope = (payload.scope as string) || "";
+  const days = (payload.days as string[]) || [];
+  const items = (payload.items ?? []) as Array<Record<string, unknown>>;
+  const history = (payload.history ?? []) as Array<{ role?: string; text?: string }>;
+  const message = (payload.message as string) || "";
+
+  const itemLines = items.length
+    ? items.map((i) => {
+      const time = i.start_time ? `${i.start_time}${i.end_time ? `~${i.end_time}` : ""}` : "無時間";
+      const extra = [i.category, i.location_name, i.note].filter(Boolean).join("｜");
+      return `${i.ref} [${i.day_date || "未排定日期"} ${time}] ${i.title}${extra ? `（${extra}）` : ""}`;
+    }).join("\n")
+    : "（目前這個範圍內沒有任何項目）";
+
+  const historyLines = history.length
+    ? history.map((h) => `${h.role === "user" ? "使用者" : "你"}：${h.text}`).join("\n")
+    : "";
+
+  return [
+    `你是「${trip.title ?? "這趟旅行"}」的行程編輯助理，用對話幫使用者調整行程。`,
+    trip.start ? `旅行期間：${trip.start} ~ ${trip.end ?? trip.start}` : "",
+    scope
+      ? `★目前編輯範圍：只有 ${scope} 這一天★。所有異動都只能發生在 ${scope}，其他日期一律不准碰，即使使用者提到別天也要婉拒並說明目前只在編輯這天。`
+      : `目前編輯範圍：整趟。可異動的日期只有：${days.join("、") || "（依期間）"}；清單以外的日期一律不要產生。`,
+    "",
+    "目前行程（每筆前面的 #n 是代號，用來指定要動哪一筆）：",
+    itemLines,
+    historyLines ? `\n先前的對話（用來理解「再早一點」「那天也一樣」這類指代）：\n${historyLines}` : "",
+    "",
+    `使用者這次說：「${message}」`,
+    "",
+    "你可以下三種指令（ops）：",
+    '- 修改：{"op":"update","ref":"#3","fields":{"start_time":"13:30","end_time":"15:00"}}',
+    "  fields 只放『真的要改』的欄位，沒有要動的欄位不要出現。可用欄位：day_date, start_time, end_time, title, category, location_name, note。",
+    '- 刪除：{"op":"delete","ref":"#5"}',
+    '- 新增：{"op":"create","item":{"day_date":"YYYY-MM-DD","start_time":"HH:MM","end_time":"HH:MM","title":"地點名","category":"景點|餐廳|交通|住宿|購物|其他","location_name":"可在Google地圖搜尋的完整地名","note":"一句話建議"}}',
+    "",
+    "規則：",
+    "- ref 只能用上面清單裡出現過的代號，不可自己發明；要動的項目不在清單裡就別硬掰，改成在 reply 說明。",
+    `- day_date 只能是這些日期：${(scope ? [scope] : days).join("、") || "（依期間）"}。`,
+    "- 時間一律 HH:MM 24 小時制。調整某一筆的時間造成後面撞期時，順手把受影響的項目也一起 update，讓整天不重疊、順路。",
+    "- 新增項目時盡量把欄位填滿（location_name 要含城市、能被地圖搜尋），只有真的無法判斷才留空字串。",
+    "- 使用者只是提問或閒聊（如「第二天會不會太趕？」），就回空的 ops，只用 reply 回答。",
+    "- 使用者要求「重排一整天」時，優先用 update 調整既有項目，只有真的多餘才 delete、真的缺才 create。",
+    "",
+    "reply：用繁體中文一到三句，具體說明你做了什麼或為什麼不做，不要客套開場白。",
+    '只輸出 JSON 物件：{"reply":"…","ops":[…]}。ops 沒有異動時給空陣列。',
+  ].filter(Boolean).join("\n");
+}
+
 // 記帳語意解析
 function expensePrompt(payload: Record<string, unknown>): string {
   const text = (payload.text as string) || "";
@@ -291,6 +345,17 @@ serve(async (req) => {
         // 10 天行程實測要 ~4000 output token，舊值 3072 會被截斷
         const { text, model } = await gemini(itineraryPrompt(payload), { jsonOut: true, maxTokens: 8192, mode });
         return json({ items: asArray(parseJson(text, mode), "items", "itinerary"), _model: model });
+      }
+      case "edit_itinerary": {
+        // 整趟重排會吐出大量 op，跟 suggest_itinerary 一樣要給足額度，不然被 MAX_TOKENS 截斷
+        const { text, model } = await gemini(editItineraryPrompt(payload), { jsonOut: true, maxTokens: 8192, mode });
+        const parsed = parseJson(text, mode) as Record<string, unknown>;
+        return json({
+          reply: String(parsed?.reply ?? ""),
+          // 傳 parsed 而非 parsed.ops：模型偶爾會用 operations 當 key，或整包直接回陣列
+          ops: asArray(parsed, "ops", "operations"),
+          _model: model,
+        });
       }
       case "parse_expense": {
         const { text, model } = await gemini(expensePrompt(payload), { jsonOut: true, maxTokens: 2048, mode });
