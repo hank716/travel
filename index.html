@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#FFF4E8" />
   <title>旅程規劃 · Trip Planner</title>
-  <link rel="stylesheet" href="./css/app.css?v=20260724b" />
+  <link rel="stylesheet" href="./css/app.css?v=20260724c" />
 </head>
 <body>
   <header class="topbar">
@@ -368,9 +368,23 @@
               </select>
             </label>
           </div>
+          <!-- 不用 <input type="time">：它的顯示格式吃「瀏覽器語言」而非本頁 lang，
+               英文 locale 會把 19:00 畫成 07:00 PM。改成自建的 24 小時制時/分下拉。 -->
           <div class="row">
-            <label>開始 <input name="start_time" type="time" /></label>
-            <label>結束 <input name="end_time" type="time" /></label>
+            <label>開始
+              <span class="time-pick">
+                <select name="start_h" aria-label="開始時"></select>
+                <span class="time-sep">:</span>
+                <select name="start_m" aria-label="開始分"></select>
+              </span>
+            </label>
+            <label>結束
+              <span class="time-pick">
+                <select name="end_h" aria-label="結束時"></select>
+                <span class="time-sep">:</span>
+                <select name="end_m" aria-label="結束分"></select>
+              </span>
+            </label>
           </div>
           <label>地點 / 地圖搜尋字
             <input name="location_name" placeholder="例如：東京晴空塔" maxlength="80" />
@@ -583,7 +597,7 @@
 
   <div id="toast" class="toast" hidden></div>
 
-  <script src="./config.js?v=20260724b"></script>
-  <script type="module" src="./js/app.js?v=20260724b"></script>
+  <script src="./config.js?v=20260724c"></script>
+  <script type="module" src="./js/app.js?v=20260724c"></script>
 </body>
 </html>

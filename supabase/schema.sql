@@ -13,6 +13,14 @@
 create extension if not exists pgcrypto;
 
 -- -----------------------------------------------------------------------------
+-- private schema：放「前端不會、也不該直接呼叫」的函式。
+-- PostgREST 只曝出 exposed schema（public / graphql_public），所以放這裡的東西
+-- 不會變成 /rest/v1/rpc/*，也就不會被 linter 標成「anon/authenticated 可執行
+-- 的 SECURITY DEFINER 函式」。public 只留前端真的會呼叫的三個 RPC。
+-- -----------------------------------------------------------------------------
+create schema if not exists private;
+
+-- -----------------------------------------------------------------------------
 -- 帳號 profiles（單一管理員制）：第一個註冊者自動成為管理員
 -- -----------------------------------------------------------------------------
 create table if not exists public.profiles (
@@ -24,7 +32,7 @@ create table if not exists public.profiles (
 
 -- 唯一管理員（寫死）。若要更換，改這裡 + config.js 的 ADMIN_EMAIL。
 -- 新使用者註冊 → 建立 profile；只有寫死的 Email 會是管理員，其餘一律 false。
-create or replace function public.handle_new_user()
+create or replace function private.handle_new_user()
 returns trigger
 language plpgsql
 security definer
@@ -45,7 +53,7 @@ $$;
 drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
-  for each row execute function public.handle_new_user();
+  for each row execute function private.handle_new_user();
 
 -- 一次性校正：依 auth.users.email 重設既有 profiles 的 is_admin（確保只有寫死 Email 是 admin）
 update public.profiles p
@@ -53,7 +61,7 @@ update public.profiles p
   from auth.users u where u.id = p.id;
 
 -- 目前登入者是否為（全域）管理員
-create or replace function public.is_admin()
+create or replace function private.is_admin()
 returns boolean
 language sql security definer stable
 set search_path = public
@@ -175,7 +183,7 @@ create index if not exists idx_packing_trip        on public.packing_items(trip_
 -- -----------------------------------------------------------------------------
 
 -- 判斷目前登入者是否為某行程的成員（SECURITY DEFINER 避開 members 自身 RLS 遞迴）
-create or replace function public.is_trip_member(p_trip_id uuid)
+create or replace function private.is_trip_member(p_trip_id uuid)
 returns boolean
 language sql
 security definer
@@ -190,7 +198,7 @@ $$;
 
 -- 目前登入者是否為某行程「可編輯」的成員（成員 且 (can_edit 或 is_admin)）。
 -- 唯讀成員 → false；行程管理員一律可編輯。寫入類 RLS 用這個把關。
-create or replace function public.is_trip_editor(p_trip_id uuid)
+create or replace function private.is_trip_editor(p_trip_id uuid)
 returns boolean
 language sql
 security definer
@@ -205,7 +213,7 @@ as $$
 $$;
 
 -- 產生一組未被使用的行程碼（6 碼，去掉易混淆字元）
-create or replace function public.gen_trip_code()
+create or replace function private.gen_trip_code()
 returns text
 language plpgsql
 set search_path = public
@@ -257,7 +265,7 @@ begin
   if auth.uid() is null then
     raise exception 'not authenticated';
   end if;
-  if not public.is_admin() then
+  if not private.is_admin() then
     raise exception 'admin only';
   end if;
 
@@ -271,7 +279,7 @@ begin
       raise exception 'code taken';
     end if;
   else
-    v_code := public.gen_trip_code();
+    v_code := private.gen_trip_code();
   end if;
 
   insert into public.trips (code, title, start_date, end_date, base_currency)
@@ -295,7 +303,7 @@ end;
 $$;
 
 -- 目前登入者是否為某行程的管理員
-create or replace function public.is_trip_admin(p_trip_id uuid)
+create or replace function private.is_trip_admin(p_trip_id uuid)
 returns boolean
 language sql security definer stable
 set search_path = public
@@ -317,7 +325,7 @@ as $$
 declare
   v_member public.members;
 begin
-  if not (public.is_admin() or public.is_trip_admin(p_trip_id)) then
+  if not (private.is_admin() or private.is_trip_admin(p_trip_id)) then
     raise exception 'admin only';
   end if;
   if not exists (select 1 from public.members m where m.id = p_member_id and m.trip_id = p_trip_id) then
@@ -345,7 +353,7 @@ begin
   if v_trip is null then
     raise exception 'member not found';
   end if;
-  if not (public.is_admin() or public.is_trip_admin(v_trip)) then
+  if not (private.is_admin() or private.is_trip_admin(v_trip)) then
     raise exception 'admin only';
   end if;
   update public.members set can_edit = coalesce(p_can_edit, true)
@@ -371,21 +379,25 @@ drop function if exists public.join_trip(text, text, text);
 -- 作法：全部收掉 → 只把真的需要的授予 authenticated。
 -- -----------------------------------------------------------------------------
 
-revoke execute on all functions in schema public from public, anon, authenticated;
+revoke execute on all functions in schema public  from public, anon, authenticated;
+revoke execute on all functions in schema private from public, anon, authenticated;
+revoke all     on schema private                  from public, anon;
 -- 之後新增的函式也不要自動給出去
-alter default privileges in schema public revoke execute on functions from public;
+alter default privileges in schema public  revoke execute on functions from public;
+alter default privileges in schema private revoke execute on functions from public;
 
--- 前端真的會呼叫的 RPC（三個內部都有 admin 檢查）
+-- 前端真的會呼叫的 RPC（三個內部都有 admin 檢查）。public 只留這三個。
 grant execute on function public.create_trip(text, date, date, text, text[], text, text, text, boolean) to authenticated;
 grant execute on function public.set_trip_admin(uuid, uuid)          to authenticated;
 grant execute on function public.set_member_can_edit(uuid, boolean)  to authenticated;
 
--- RLS policy 內部會呼叫這四個 helper，authenticated 必須保有 EXECUTE。
--- 它們只回傳「目前登入者」的布林值，不吃也不吐別人的資料，曝出來無實質風險。
-grant execute on function public.is_admin()             to authenticated;
-grant execute on function public.is_trip_member(uuid)   to authenticated;
-grant execute on function public.is_trip_editor(uuid)   to authenticated;
-grant execute on function public.is_trip_admin(uuid)    to authenticated;
+-- RLS policy 是以「查詢者身分」求值，所以 authenticated 必須摸得到這四個 helper。
+-- 但 private 不在 PostgREST 的 exposed schema 內，不會變成 /rest/v1/rpc/*。
+grant usage on schema private to authenticated;
+grant execute on function private.is_admin()             to authenticated;
+grant execute on function private.is_trip_member(uuid)   to authenticated;
+grant execute on function private.is_trip_editor(uuid)   to authenticated;
+grant execute on function private.is_trip_admin(uuid)    to authenticated;
 
 -- 刻意不授予任何人：
 --   gen_trip_code()   只被 create_trip（SECURITY DEFINER，以 owner 身分跑）內部呼叫
@@ -409,38 +421,38 @@ alter table public.fx_cache        enable row level security;
 drop policy if exists profiles_self on public.profiles;
 create policy profiles_self on public.profiles for select
   to authenticated
-  using (id = auth.uid() or public.is_admin());
+  using (id = auth.uid() or private.is_admin());
 
 -- trips：成員可讀；全域 admin 唯讀可視（即使不參加也看得到）；可編輯成員可改設定；
 -- 建立走 RPC，不開放直接 INSERT。
 drop policy if exists trips_select on public.trips;
 create policy trips_select on public.trips for select
   to authenticated
-  using (public.is_trip_member(id) or public.is_admin());
+  using (private.is_trip_member(id) or private.is_admin());
 drop policy if exists trips_update on public.trips;
 create policy trips_update on public.trips for update
   to authenticated
-  using (public.is_trip_editor(id)) with check (public.is_trip_editor(id));
+  using (private.is_trip_editor(id)) with check (private.is_trip_editor(id));
 drop policy if exists trips_delete on public.trips;
 create policy trips_delete on public.trips for delete
   to authenticated
-  using (public.is_admin());           -- 僅管理員可刪除整趟（cascade 連帶清掉項目/記帳）
+  using (private.is_admin());           -- 僅管理員可刪除整趟（cascade 連帶清掉項目/記帳）
 
 -- trip_currencies：成員/admin 可讀；可編輯成員可增減幣別。
 drop policy if exists tc_select on public.trip_currencies;
 create policy tc_select on public.trip_currencies for select
   to authenticated
-  using (public.is_trip_member(trip_id) or public.is_admin());
+  using (private.is_trip_member(trip_id) or private.is_admin());
 drop policy if exists tc_all on public.trip_currencies;
 create policy tc_all on public.trip_currencies for all
   to authenticated
-  using (public.is_trip_editor(trip_id)) with check (public.is_trip_editor(trip_id));
+  using (private.is_trip_editor(trip_id)) with check (private.is_trip_editor(trip_id));
 
 -- members：同行程成員/admin 可讀；只能改/刪自己的列；成員由管理員經 admin-users 建立。
 drop policy if exists members_select on public.members;
 create policy members_select on public.members for select
   to authenticated
-  using (public.is_trip_member(trip_id) or public.is_admin());
+  using (private.is_trip_member(trip_id) or private.is_admin());
 drop policy if exists members_update_own on public.members;
 create policy members_update_own on public.members for update
   to authenticated
@@ -453,54 +465,54 @@ create policy members_delete_own on public.members for delete
 drop policy if exists members_admin_update on public.members;
 create policy members_admin_update on public.members for update
   to authenticated
-  using (public.is_trip_admin(trip_id)) with check (public.is_trip_admin(trip_id));
+  using (private.is_trip_admin(trip_id)) with check (private.is_trip_admin(trip_id));
 drop policy if exists members_admin_delete on public.members;
 create policy members_admin_delete on public.members for delete
   to authenticated
-  using (public.is_trip_admin(trip_id));
+  using (private.is_trip_admin(trip_id));
 
 -- itinerary / expenses：成員/admin 可讀；可編輯成員可寫。
 drop policy if exists itinerary_select on public.itinerary_items;
 create policy itinerary_select on public.itinerary_items for select
   to authenticated
-  using (public.is_trip_member(trip_id) or public.is_admin());
+  using (private.is_trip_member(trip_id) or private.is_admin());
 drop policy if exists itinerary_all on public.itinerary_items;
 create policy itinerary_all on public.itinerary_items for all
   to authenticated
-  using (public.is_trip_editor(trip_id)) with check (public.is_trip_editor(trip_id));
+  using (private.is_trip_editor(trip_id)) with check (private.is_trip_editor(trip_id));
 
 drop policy if exists expenses_select on public.expenses;
 create policy expenses_select on public.expenses for select
   to authenticated
-  using (public.is_trip_member(trip_id) or public.is_admin());
+  using (private.is_trip_member(trip_id) or private.is_admin());
 drop policy if exists expenses_all on public.expenses;
 create policy expenses_all on public.expenses for all
   to authenticated
-  using (public.is_trip_editor(trip_id)) with check (public.is_trip_editor(trip_id));
+  using (private.is_trip_editor(trip_id)) with check (private.is_trip_editor(trip_id));
 
 -- expense_splits：依母 expense 的行程判斷（讀：成員/admin；寫：可編輯成員）。
 drop policy if exists splits_select on public.expense_splits;
 create policy splits_select on public.expense_splits for select
   to authenticated
   using (exists (select 1 from public.expenses e
-                 where e.id = expense_id and (public.is_trip_member(e.trip_id) or public.is_admin())));
+                 where e.id = expense_id and (private.is_trip_member(e.trip_id) or private.is_admin())));
 drop policy if exists splits_all on public.expense_splits;
 create policy splits_all on public.expense_splits for all
   to authenticated
   using (exists (select 1 from public.expenses e
-                 where e.id = expense_id and public.is_trip_editor(e.trip_id)))
+                 where e.id = expense_id and private.is_trip_editor(e.trip_id)))
   with check (exists (select 1 from public.expenses e
-                 where e.id = expense_id and public.is_trip_editor(e.trip_id)));
+                 where e.id = expense_id and private.is_trip_editor(e.trip_id)));
 
 -- packing_items：成員/admin 可讀；可編輯成員可寫。
 drop policy if exists packing_select on public.packing_items;
 create policy packing_select on public.packing_items for select
   to authenticated
-  using (public.is_trip_member(trip_id) or public.is_admin());
+  using (private.is_trip_member(trip_id) or private.is_admin());
 drop policy if exists packing_all on public.packing_items;
 create policy packing_all on public.packing_items for all
   to authenticated
-  using (public.is_trip_editor(trip_id)) with check (public.is_trip_editor(trip_id));
+  using (private.is_trip_editor(trip_id)) with check (private.is_trip_editor(trip_id));
 
 -- fx_cache：所有登入者可讀寫（純快取，非機密）。
 -- `to authenticated` 已經表達了原本 auth.role() = 'authenticated' 的意思，不必重複判斷。
@@ -508,10 +520,17 @@ drop policy if exists fx_select on public.fx_cache;
 create policy fx_select on public.fx_cache for select
   to authenticated
   using (true);
+-- INSERT 不寫 `with check (true)`：那等於對登入者完全不設防（linter 也會標）。
+-- 這張表是公開匯率的快取，寫入端只有 js/fx.js，就照它實際會寫的形狀限制住，
+-- 至少擋掉塞歷史/未來日期或亂七八糟 payload 的行為。
 drop policy if exists fx_insert on public.fx_cache;
 create policy fx_insert on public.fx_cache for insert
   to authenticated
-  with check (true);
+  with check (
+    date between current_date - 1 and current_date + 1   -- js/fx.js 用 UTC 日期，容錯 ±1 天
+    and base ~ '^[A-Z]{3}$'
+    and jsonb_typeof(rates) = 'object'
+  );
 
 -- -----------------------------------------------------------------------------
 -- Realtime（即時多人同步）
@@ -533,3 +552,16 @@ begin
   alter publication supabase_realtime add table public.packing_items;
 exception when duplicate_object then null;
 end $$;
+
+-- -----------------------------------------------------------------------------
+-- 收尾：移除 public 裡的舊 helper（現在都住在 private）。
+-- 必須放在最尾端——上面的 trigger 與 21 條 policy 已全數改指向 private.*，
+-- 這時候才沒有依賴。刻意不加 cascade：真有殘留依賴要直接報錯，
+-- 而不是靜默把 policy 一起砍掉。
+-- -----------------------------------------------------------------------------
+drop function if exists public.is_admin();
+drop function if exists public.is_trip_member(uuid);
+drop function if exists public.is_trip_editor(uuid);
+drop function if exists public.is_trip_admin(uuid);
+drop function if exists public.gen_trip_code();
+drop function if exists public.handle_new_user();

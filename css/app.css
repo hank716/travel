@@ -132,6 +132,11 @@ input, select, textarea {
 .form .row { display: flex; gap: 12px; flex-wrap: wrap; }
 .form .row label { flex: 1 1 140px; } /* 太窄就自動換成單欄 */
 
+/* 自建的 24 小時制時間選擇（時 : 分），取代會被瀏覽器語言畫成 12 小時制的 input[type=time] */
+.time-pick { display: flex; align-items: center; gap: 6px; }
+.time-pick select { flex: 1 1 0; min-width: 0; padding-left: 9px; padding-right: 6px; }
+.time-sep { flex: 0 0 auto; color: var(--muted); font-weight: 700; }
+
 .chip-pick { display: flex; flex-wrap: wrap; gap: 8px; min-height: 38px; align-items: center; }
 .add-currency select { min-width: 0; flex: 1; }
 

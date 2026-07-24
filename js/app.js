@@ -1007,11 +1007,47 @@ function buildMapUrl(items) {
   return "https://www.google.com/maps/dir/" + pts.map(encodeURIComponent).join("/");
 }
 
+// ---------- 時間選擇（時 / 分 兩個 select） ----------
+// 原生 <input type="time"> 的顯示格式吃「瀏覽器語言」而非本頁 lang，英文 locale
+// 會把 19:00 畫成 07:00 PM（存進 DB 的值其實是對的，但看起來像選錯）。HTML/CSS
+// 沒有辦法強制 24 小時制，只能自建。
+function fillTimeSelects(hSel, mSel) {
+  if (hSel.options.length) return; // 只灌一次
+  const opt = (v, label) => `<option value="${v}">${label}</option>`;
+  hSel.innerHTML = opt("", "--") +
+    Array.from({ length: 24 }, (_, h) => opt(pad2(h), pad2(h))).join("");
+  mSel.innerHTML = opt("", "--") +
+    Array.from({ length: 12 }, (_, i) => opt(pad2(i * 5), pad2(i * 5))).join("");
+}
+
+function pad2(n) { return String(n).padStart(2, "0"); }
+
+// "19:00" → 選中 19 / 00；空值 → 兩個都回 "--"。
+// 舊資料的分鐘若不是 5 的倍數（如 19:07），動態補一個選項，避免值被吃掉。
+function setTimeValue(hSel, mSel, hhmm) {
+  mSel.querySelectorAll("option[data-extra]").forEach((o) => o.remove()); // 清掉上一筆補的
+  const m = /^(\d{2}):(\d{2})/.exec(hhmm || "");
+  if (!m) { hSel.value = ""; mSel.value = ""; return; }
+  hSel.value = m[1];
+  if (!Array.from(mSel.options).some((o) => o.value === m[2])) {
+    mSel.insertAdjacentHTML("beforeend", `<option data-extra value="${m[2]}">${m[2]}</option>`);
+  }
+  mSel.value = m[2];
+}
+
+// 時為空 → null；時有值、分留空 → 視為 00。
+function getTimeValue(hSel, mSel) {
+  if (!hSel.value) return null;
+  return `${hSel.value}:${mSel.value || "00"}`;
+}
+
 // ---------- 項目 Modal ----------
 function openItemModal(item) {
   if (!guardEdit()) return;
   const f = $("#itemForm");
   f.reset();
+  fillTimeSelects(f.start_h, f.start_m);
+  fillTimeSelects(f.end_h, f.end_m);
   $("#itemError").hidden = true;
   const editing = !!item;
   $("#itemModalTitle").textContent = editing ? "編輯項目" : "新增項目";
@@ -1021,14 +1057,16 @@ function openItemModal(item) {
     f.title.value = item.title || "";
     f.day_date.value = item.day_date || "";
     f.category.value = item.category || "景點";
-    f.start_time.value = item.start_time ? item.start_time.slice(0, 5) : "";
-    f.end_time.value = item.end_time ? item.end_time.slice(0, 5) : "";
+    setTimeValue(f.start_h, f.start_m, item.start_time);
+    setTimeValue(f.end_h, f.end_m, item.end_time);
     f.location_name.value = item.location_name || "";
     f.notes.value = item.notes || "";
   } else {
     // 預設日期：目前選的日期，或行程出發日
     f.day_date.value = (state.activeDay && state.activeDay !== "") ? state.activeDay
       : (state.trip?.start_date || "");
+    setTimeValue(f.start_h, f.start_m, "");
+    setTimeValue(f.end_h, f.end_m, "");
   }
   $("#itemModal").hidden = false;
 }
@@ -1042,8 +1080,8 @@ async function onItemSubmit(e) {
     title: f.title.value.trim(),
     day_date: f.day_date.value || null,
     category: f.category.value,
-    start_time: f.start_time.value || null,
-    end_time: f.end_time.value || null,
+    start_time: getTimeValue(f.start_h, f.start_m),
+    end_time: getTimeValue(f.end_h, f.end_m),
     location_name: f.location_name.value.trim() || null,
     notes: f.notes.value.trim() || null,
   };
