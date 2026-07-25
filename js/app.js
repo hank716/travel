@@ -703,11 +703,33 @@ async function onLoggedIn() {
 // 對話只活在視窗開著的期間，關掉就清空（不進資料庫，也不佔 Supabase 額度）。
 let aiChat = { history: [], busy: false };
 
-const AI_EXAMPLES = [
-  "第二天太趕了，午餐後多留一小時",
-  "刪掉所有購物行程",
-  "幫我排第三天，想吃在地美食",
+// 範例要跟著編輯範圍走。預設範圍是「正在看的那一天」，這時擺「幫我排第三天」當範例，
+// 使用者照抄會被模型婉拒（validateOps 也會把日期綁回當天），第一次用的人只會覺得壞了。
+const AI_EXAMPLES_DAY = [
+  "這天太趕了，午餐後多留一小時",
+  "把下午的購物行程刪掉",
+  "晚餐換一家在地一點的",
 ];
+const AI_EXAMPLES_TRIP = [
+  "幫我排第三天，想吃在地美食",
+  "刪掉所有購物行程",
+  "第二天太趕了，午餐後多留一小時",
+];
+
+// 招呼語＝說清楚現在動得到哪幾天 ＋ 對應範圍的範例
+function aiGreetingHtml() {
+  const scope = $("#aiItinDay").value;
+  const eg = scope ? AI_EXAMPLES_DAY : AI_EXAMPLES_TRIP;
+  const where = scope
+    ? `現在只會動到 <b>${escapeHtml(dayLabel(scope))}</b> 這天；要改其他天，把上面的範圍換成「整趟」。`
+    : `現在的範圍是<b>整趟</b>，可以直接說第幾天。`;
+  return `<div class="ai-msg ai-msg--ai">用說的就能排行程、改行程 —— 改時間、刪項目、加景點都可以。<br>${where}
+       <div class="ai-msg-eg"><b>例如：</b>${eg.map((e) => `「${escapeHtml(e)}」`).join("<br>")}</div>
+     </div>`;
+}
+
+// 對話一開始就不要再動招呼語，免得把使用者講過的話洗掉
+const aiChatUntouched = () => !$("#aiChatLog").querySelector(".ai-msg--user, .ai-ops");
 
 function openAiAssistant() {
   if (!guardEdit()) return;
@@ -720,10 +742,7 @@ function openAiAssistant() {
   sel.innerHTML = `<option value="">整趟（所有日期）</option>` +
     days.map((d) => `<option value="${d}">${dayLabel(d)}</option>`).join("");
   sel.value = (state.activeDay && days.includes(state.activeDay)) ? state.activeDay : "";
-  $("#aiChatLog").innerHTML =
-    `<div class="ai-msg ai-msg--ai">用說的就能排行程、改行程 —— 改時間、刪項目、加景點都可以。
-       <div class="ai-msg-eg"><b>例如：</b>${AI_EXAMPLES.map((e) => `「${escapeHtml(e)}」`).join("<br>")}</div>
-     </div>`;
+  $("#aiChatLog").innerHTML = aiGreetingHtml();
   $("#aiItinModal").hidden = false;
   // 手機上自動 focus 會直接彈鍵盤把對話擠掉，只在桌機做
   if (window.innerWidth > 520) $("#aiChatInput").focus();
@@ -2041,6 +2060,10 @@ async function boot() {
   $("#aiItinBtn").onclick = openAiAssistant;
   $("#aiItinClose").onclick = closeAiAssistant;
   $("#aiChatSend").onclick = onAiChatSend;
+  // 換範圍就換範例：能動的日期變了，招呼語裡的示範也要跟著變
+  $("#aiItinDay").onchange = () => {
+    if (aiChatUntouched()) $("#aiChatLog").innerHTML = aiGreetingHtml();
+  };
   // Enter 送出、Shift+Enter 換行（比照記帳的語意輸入框）
   $("#aiChatInput").addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onAiChatSend(); }

@@ -14,7 +14,7 @@ const CORS = {
 };
 
 // 每次部署遞增。免費方案沒有 log，靠 diag 回傳這個值來確認線上跑的是哪一版。
-const BUILD = "2026-07-25-1";
+const BUILD = "2026-07-25-2";
 
 // Gemini 各世代的 thinking 參數互不相容，傳錯世代 → 400 INVALID_ARGUMENT：
 //   2.5 系列：thinkingConfig.thinkingBudget（0 = 關閉思考）
@@ -239,7 +239,7 @@ function editItineraryPrompt(payload: Record<string, unknown>): string {
     `你是「${trip.title ?? "這趟旅行"}」的行程編輯助理，用對話幫使用者調整行程。`,
     trip.start ? `旅行期間：${trip.start} ~ ${trip.end ?? trip.start}` : "",
     scope
-      ? `★目前編輯範圍：只有 ${scope} 這一天★。所有異動都只能發生在 ${scope}，其他日期一律不准碰，即使使用者提到別天也要婉拒並說明目前只在編輯這天。`
+      ? `★目前編輯範圍：只有 ${scope} 這一天★。所有異動都只能發生在 ${scope}，其他日期一律不准碰。使用者提到別天時要婉拒，並在 reply 裡告訴他解法：把視窗上方的範圍選單改成「整趟（所有日期）」就能改其他天 —— 只說不行、不給解法是不合格的回答。`
       : `目前編輯範圍：整趟。可異動的日期只有：${days.join("、") || "（依期間）"}；清單以外的日期一律不要產生。`,
     "",
     "目前行程（每筆前面的 #n 是代號，用來指定要動哪一筆）：",
