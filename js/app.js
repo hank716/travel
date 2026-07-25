@@ -65,13 +65,30 @@ function guardEdit() {
   return false;
 }
 
+// 空狀態文案要分流：唯讀的人看到「點右上角『＋ 新增』開始」只會遍尋不著那顆按鈕，
+// 因為 applyPerms() 已經把它藏起來了。唯讀版改成說明原因並指向說明頁。
+function emptyHtml(editableMsg, readonlyMsg) {
+  return canEdit()
+    ? `<p class="status">${editableMsg}</p>`
+    : `<p class="status">${readonlyMsg}你是唯讀成員，只能瀏覽。<a href="#help">這是什麼？</a></p>`;
+}
+
+// 清單底下的操作提示。「點一列可編輯」和「左滑刪除」都沒有任何視覺線索，
+// 第一次用的人只會以為列表是唯讀的。只在有資料且可編輯時附上（沒資料時空狀態已經在講話）。
+const LIST_HINT = `<p class="status list-hint">點一列可以編輯，往左滑可以刪除。</p>`;
+function appendListHint(el) {
+  if (canEdit()) el.insertAdjacentHTML("beforeend", LIST_HINT);
+}
+
 // ---------- 分頁路由（側欄 nav-item 的 data-page）----------
-const PAGES = ["overview", "itinerary", "expenses", "weather", "packing", "memo", "admin"];
+const PAGES = ["overview", "itinerary", "expenses", "weather", "packing", "memo", "help", "admin"];
+// 不需要選定行程就能看的分頁。說明頁尤其要在這裡——還沒被指派行程的人最需要它。
+const TRIPLESS_PAGES = ["overview", "help", "admin"];
 
 function showPage(name) {
   if (!PAGES.includes(name)) name = "overview";
   if (name === "admin" && !isAdmin()) name = "overview";        // 管理頁僅管理員
-  if (!state.trip && name !== "overview" && name !== "admin") name = "overview"; // 沒選行程只能看總覽/管理
+  if (!state.trip && !TRIPLESS_PAGES.includes(name)) name = "overview";
   PAGES.forEach((p) => ($("#view-" + p).hidden = p !== name));
   document.querySelectorAll(".nav-item").forEach((b) => b.classList.toggle("is-active", b.dataset.page === name));
   if (location.hash.slice(1) !== name) history.replaceState(null, "", "#" + name);
@@ -121,11 +138,15 @@ function renderTripSwitcher() {
 // 行程清單的列。頂部 popover（桌機）與側欄抽屜（手機）共用同一份標記與行為。
 function tripListHtml(trips, curId) {
   if (!trips?.length) return `<div class="popover-head">尚無行程</div>`;
-  return trips.map((t) => `
+  const rows = trips.map((t) => `
     <button class="popover-item ${t.id === curId ? "is-current" : ""}" type="button" data-go="${t.id}">
       ${escapeHtml(t.title)}
       <span class="sub">${tripWhenHtml(t)}</span>
     </button>`).join("");
+  // 「離開這趟」的唯一入口。沒有它就回不去未選行程的狀態——
+  // 而那個狀態才有示範行程與使用說明的入口，等於進了第一趟之後就再也看不到。
+  return curId ? rows + `<div class="popover-sep"></div>
+    <button class="popover-item" type="button" data-exit="1">🏠 回到行程清單</button>` : rows;
 }
 function bindTripGo(container, trips, curId, before) {
   container.querySelectorAll("[data-go]").forEach((b) => (b.onclick = () => {
@@ -133,6 +154,10 @@ function bindTripGo(container, trips, curId, before) {
     const t = trips?.find((x) => x.id === b.dataset.go);
     if (!t || t.id === curId) return;   // 已經在這趟，不必重進
     saveTrip(t); enterTrip(t.id).catch((e) => toast(humanError(e), false));
+  }));
+  container.querySelectorAll("[data-exit]").forEach((b) => (b.onclick = () => {
+    before?.();
+    exitTrip().catch((e) => toast(humanError(e), false));
   }));
 }
 
@@ -495,7 +520,7 @@ async function renderTrip(trip) {
         <span>${escapeHtml(m.display_name)}${roleTag}${isMe ? " <small class='status'>(你)</small>" : ""}${m.auth_uid ? "" : " <small class='status'>未登入</small>"}</span>
         ${manageBtns}
       </div>`;
-    }).join("");
+    }).join("") || `<p class="status">這趟還沒有其他成員。管理員可以在「管理 → 帳號管理」建立帳號並指派進來。</p>`;
     memberListEl.querySelectorAll("[data-rm-member]").forEach((b) =>
       (b.onclick = () => onRemoveMember(b.dataset.rmMember, b.dataset.name)));
     memberListEl.querySelectorAll("[data-set-admin]").forEach((b) =>
@@ -581,7 +606,7 @@ function upcomingHtml(items) {
   // items 已經由 listItems 依時間排好，這裡只挑出有日期的就好。
   // （以前這裡自己再排一次，而且沒時間的會用 "" 比大小 → 排到當天最前面，跟行程頁不一致）
   const dated = items.filter((i) => i.day_date);
-  if (!dated.length) return `<p class="status">行程項目尚未排定日期。</p>`;
+  if (!dated.length) return `<p class="status">行程項目尚未排定日期。到「行程」頁點該項目就能補上日期。</p>`;
   const today = todayStr();
   let pick = dated.filter((i) => i.day_date >= today);
   if (!pick.length) pick = dated;            // 全部過去 → 顯示整體前幾筆
@@ -611,9 +636,9 @@ function renderOverviewState() {
   $("#overviewTripDetail").hidden = !has;
   $("#noTripHint").hidden = has;
   renderTripSwitcher();
-  // 沒選行程時，行程/記帳/天氣分頁不可用；總覽與管理頁永遠可用
+  // 沒選行程時，行程/記帳/天氣分頁不可用；總覽、說明、管理頁永遠可用
   document.querySelectorAll(".nav-item").forEach((b) => {
-    if (b.dataset.page !== "overview" && b.dataset.page !== "admin") b.classList.toggle("is-disabled", !has);
+    if (!TRIPLESS_PAGES.includes(b.dataset.page)) b.classList.toggle("is-disabled", !has);
   });
 }
 
@@ -750,20 +775,41 @@ async function renderAdmin() {
 }
 
 // 建立／重建示範行程：一趟每頁都有資料的假行程，用來看功能長什麼樣。
+// 管理頁、說明頁、以及沒有行程時的總覽提示都走這裡。
+// 管理員建的是共用的 DEMO，一般成員建的是自己那一份（行程碼由 RPC 依 uid 決定，每人限一份）。
 async function onSeedDemo() {
-  const exists = adminTrips.some((t) => t.code === "DEMO");
+  // 不信任 adminTrips：從說明頁按進來時它可能還是空的或過期的
+  let trips = [];
+  try { trips = await listMyTrips(); } catch { /* 查不到就當沒有；RPC 本來就是砍掉重建 */ }
+  const demo = trips.find((t) => /^DEMO/.test(t.code || ""));
+
+  // 重建 = 整趟砍掉。若管理員把家人指派進示範行程來讓他們逛（很合理的用法），
+  // 那些指派會一起消失——不先講清楚的話這就是一個無聲的資料遺失。
+  let others = [];
+  if (demo) {
+    try {
+      const [members, session] = await Promise.all([listMembers(demo.id), getSession()]);
+      const myUid = session?.user?.id;
+      others = members.filter((m) => m.auth_uid && m.auth_uid !== myUid).map((m) => m.display_name);
+    } catch { /* 查不到就只給一般警告 */ }
+  }
+
+  const rebuildBody = "你已經有一份示範行程了，會先刪掉再重建 —— 你在裡面做過的修改都會消失，回到初始狀態。"
+    + (others.length
+      ? `注意：目前有 ${others.length} 個帳號被指派在這趟裡（${others.join("、")}），重建後他們會被移出，需要重新指派。`
+      : "");
   if (!await confirmDialog({
     title: "示範行程",
-    body: exists
-      ? "行程碼 DEMO 已經存在，會先刪掉再重建（示範資料會回到初始狀態）。"
-      : "建立一趟資料齊全的示範行程（行程碼 DEMO），行程／記帳／天氣／行李／備忘都會有東西可看。",
-    danger: exists,
-    okText: exists ? "重建" : "建立",
+    body: demo
+      ? rebuildBody
+      : "建立一趟資料齊全的示範行程：24 個行程項目、14 筆多幣別支出、17 件行李、4 則備忘與留言 —— 每一頁都有東西可以看。",
+    danger: !!demo,
+    okText: demo ? "重建" : "建立",
   })) return;
   try {
-    const trip = await seedDemoTrip("DEMO");
+    const trip = await seedDemoTrip();
     toast("示範行程已建立");
-    await renderAdmin();
+    if (isAdmin() && !$("#view-admin").hidden) await renderAdmin();
     saveTrip(trip);
     await enterTrip(trip.id);
   } catch (e) {
@@ -1499,7 +1545,9 @@ async function renderItinerary(trip) {
   const showKeys = dayKeys.length > 1 ? [state.activeDay] : dayKeys;
   const list = $("#itineraryList");
   if (!items.length) {
-    list.innerHTML = `<p class="status">還沒有任何項目，點右上角「＋ 新增項目」開始排行程。</p>`;
+    list.innerHTML = emptyHtml(
+      "還沒有任何項目，點右上角「＋ 新增項目」開始排行程。",
+      "這趟還沒有行程項目 —— 請可編輯的夥伴先排。");
     $("#mapOpen").href = buildMapUrl([]);
     setHidden("#clearItinBtn", true);
     return;
@@ -1508,6 +1556,7 @@ async function renderItinerary(trip) {
     ${dayKeys.length > 1 ? "" : `<h3 class="day-head">${dayLabel(k)}</h3>`}
     ${groups.get(k).map(renderItemCard).join("")}
   `).join("");
+  appendListHint(list);
 
   // 綁定每張卡片的按鈕
   list.querySelectorAll("[data-map]").forEach((b) =>
@@ -1798,9 +1847,12 @@ async function renderExpenses(trip) {
   const clearBtn = $("#clearExpenseBtn");
   if (clearBtn) clearBtn.onclick = () => onClearExpenses(trip, expenses);
   if (!expenses.length) {
-    list.innerHTML = `<p class="status">還沒有任何支出，點「＋ 新增支出」開始記帳。</p>`;
+    list.innerHTML = emptyHtml(
+      "還沒有任何支出，點「＋ 新增支出」開始記帳。",
+      "這趟還沒有人記帳 —— 請可編輯的夥伴新增。");
   } else {
     list.innerHTML = expenses.map((e) => renderExpenseRow(e, memberById, base, canEdit())).join("");
+    appendListHint(list);
     list.querySelectorAll("[data-exp-edit]").forEach((b) => (b.onclick = (ev) => {
       ev.stopPropagation();   // 卡片本身也可點；別讓外層再開一次
       openExpenseModal(expenses.find((x) => x.id === b.dataset.expEdit));
@@ -1886,7 +1938,7 @@ function renderSettlement(expenses, base) {
       <span class="bal-name">${escapeHtml(b.member.display_name)}</span>
       <span class="bal-net ${cls}">${txt}</span>
     </div>`;
-  }).join("");
+  }).join("") || `<p class="status">這趟還沒有成員，沒有東西可以結算。</p>`;
 
   const tx = settleUp(balances);
   $("#settleList").innerHTML = tx.length
@@ -2037,7 +2089,9 @@ async function renderPacking(trip) {
   if (clearBtn) clearBtn.onclick = () => onClearPacking(trip, total, done);
 
   if (!items.length) {
-    list.innerHTML = `<p class="status">還沒有任何物品，點「＋ 新增物品」，或用「✨ AI 助手」說一句「幫我列這趟要帶什麼」。</p>`;
+    list.innerHTML = emptyHtml(
+      "還沒有任何物品，點「＋ 新增物品」，或用「✨ AI 助手」說一句「幫我列這趟要帶什麼」。",
+      "這趟還沒有行李清單 —— 請可編輯的夥伴列。");
     return;
   }
   // 分組：共用(member_id=null) 優先，其餘依成員順序
@@ -2062,6 +2116,7 @@ async function renderPacking(trip) {
         ${g.map((it) => renderPackingRow(it, editable)).join("")}
       </div>`;
   }).join("");
+  appendListHint(list);
 
   list.querySelectorAll("[data-pack-check]").forEach((b) =>
     (b.onchange = () => onTogglePacked(b.dataset.packCheck, b.checked)));
@@ -2209,9 +2264,10 @@ async function renderMemo(trip) {
   setHidden("#addMemoBtn", !editable);
 
   if (!memos.length) {
+    // 唯讀成員開不了筆記，但開了之後留言是不受限的——這條不對稱要講出來，否則這頁對他就是死路
     list.innerHTML = editable
       ? `<p class="status">還沒有任何筆記，點「＋ 新增筆記」開一則。</p>`
-      : `<p class="status">還沒有任何筆記。</p>`;
+      : `<p class="status">還沒有任何筆記。你是唯讀成員，開不了新筆記，但夥伴開了之後你可以在底下留言討論。</p>`;
     return;
   }
 
@@ -2594,13 +2650,32 @@ function confirmDialog({ title = "確認", body = "", danger = false, okText = "
 
 // ---------- 行程中樞（總覽：我的行程 / 建立 / 加入登入 / 刪除） ----------
 // 沒有選定行程時的著陸：顯示 app 外殼 + 總覽中樞
-async function showHub() {
+// 離開目前行程，回到「還沒選行程」的中樞。
+// enterSeq 要先跳號，把還在飛的 enterTrip 作廢，否則它稍後回來又會把 state.trip 設回去。
+async function exitTrip() {
+  enterSeq++;
+  unsubAll();
+  clearSavedTrip();
+  state.trip = null;
+  state.me = null;
+  state.members = [];
+  state.currencies = [];
+  state.activeDay = null;
+  state.weatherLoaded = false;
+  packCtxCache = null;
+  document.body.classList.remove("readonly");   // 別把上一趟的唯讀狀態帶著走
+  await showHub(true);   // 裡面的 showPage("overview") 會順手把 hash 改掉，不必自己動 location
+}
+
+// force = true：不要因為「只有一趟」就自動進去。
+// 這是給 exitTrip() 用的——否則單一行程的人一按「回到行程清單」就會被彈回原本那趟。
+async function showHub(force = false) {
   state.trip = null;
   let trips = [];
   try { trips = await listMyTrips(); } catch { /* 略過 */ }
   // 只有一個行程 → 直接進入，省去先在總覽點選。
   // 進不去（例如剛好斷線）就退回中樞清單，不要讓整個啟動流程掛掉。
-  if (trips.length === 1) {
+  if (trips.length === 1 && !force) {
     saveTrip(trips[0]);
     try { await enterTrip(trips[0].id); return; }
     catch (e) { toast(humanError(e), false); state.trip = null; }
@@ -2682,7 +2757,9 @@ async function boot() {
   // 管理頁
   $("#adminAddMemberBtn").onclick = onAdminAddMember;
   $("#adminCreateTripBtn").onclick = () => openTripModal();
-  $("#adminSeedDemoBtn").onclick = onSeedDemo;
+  // 示範行程有三個入口：管理頁、說明頁、以及沒有行程時的總覽提示
+  document.querySelectorAll("#adminSeedDemoBtn, #helpDemoBtn, [data-seed-demo]")
+    .forEach((b) => (b.onclick = onSeedDemo));
   $("#tripEditClose").onclick = () => ($("#tripEditModal").hidden = true);
   $("#tripEditForm").addEventListener("submit", onTripEditSubmit);
   $("#tripEditModal").addEventListener("click", (e) => { if (e.target.id === "tripEditModal") $("#tripEditModal").hidden = true; });

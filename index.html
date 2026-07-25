@@ -5,16 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#FFF4E8" />
   <title>旅程規劃 · Trip Planner</title>
-  <link rel="stylesheet" href="./css/app.css?v=20260726m" />
+  <link rel="stylesheet" href="./css/app.css?v=20260726q" />
   <!-- 網站圖示：ico 排在最前面，裡面有 16/32/48/64/128/256 六種各自算過的點陣圖，
        分頁列那種 16px 的尺寸靠它才會銳利；SVG 補高解析度場合；
        apple-touch-icon 是 iOS「加到主畫面」用的。圖檔都由 tools/make-icons.py 產生。
        圖檔會被瀏覽器長期快取，所以一樣帶 ?v=。 -->
-  <link rel="icon" sizes="16x16 32x32 48x48 64x64 128x128 256x256" href="./assets/favicon.ico?v=20260726m" />
-  <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg?v=20260726m" />
-  <link rel="icon" type="image/png" sizes="192x192" href="./assets/icon-192.png?v=20260726m" />
-  <link rel="icon" type="image/png" sizes="512x512" href="./assets/icon-512.png?v=20260726m" />
-  <link rel="apple-touch-icon" href="./assets/apple-touch-icon.png?v=20260726m" />
+  <link rel="icon" sizes="16x16 32x32 48x48 64x64 128x128 256x256" href="./assets/favicon.ico?v=20260726q" />
+  <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg?v=20260726q" />
+  <link rel="icon" type="image/png" sizes="192x192" href="./assets/icon-192.png?v=20260726q" />
+  <link rel="icon" type="image/png" sizes="512x512" href="./assets/icon-512.png?v=20260726q" />
+  <link rel="apple-touch-icon" href="./assets/apple-touch-icon.png?v=20260726q" />
   <meta name="apple-mobile-web-app-title" content="旅程規劃" />
 </head>
 <body>
@@ -60,9 +60,13 @@
       <button class="nav-item" data-page="weather" type="button">⛅ 天氣</button>
       <button class="nav-item" data-page="packing" type="button">🎒 行李</button>
       <button class="nav-item" data-page="memo" type="button">📝 備忘</button>
+      <!-- 說明頁沒有行程也要能開（renderOverviewState 的停用清單有排除它） -->
+      <button class="nav-item" data-page="help" type="button">❓ 說明</button>
       <button class="nav-item" data-page="admin" type="button" hidden>⚙️ 管理</button>
     </nav>
     <div class="drawer-foot">
+      <!-- 只有 body.readonly 時才顯示（純 CSS） -->
+      <p class="status readonly-only readonly-note">👀 唯讀模式：你只能瀏覽，不能編輯。<a href="#help">這是什麼？</a></p>
       <div id="drawerAccount" class="status" style="margin-bottom:8px;"></div>
       <!-- 桌機的 #accountBtn 被 CSS 藏起來（帳號相關一律走側欄），帳號設定入口要在這裡也有一份 -->
       <div class="row" style="gap:8px;">
@@ -218,6 +222,11 @@
         <!-- 沒選行程時的提示 -->
         <div id="noTripHint" class="card" hidden>
           <p class="status">還沒有選擇行程。從上方「我的行程」點一趟進入；行程由管理員建立與指派。</p>
+          <p class="status">想先看看這個系統能做什麼？建一趟示範行程，六個分頁都會有東西可以玩。</p>
+          <div class="row" style="gap:8px;">
+            <button class="btn btn--sm" type="button" data-seed-demo>🎌 建立示範行程</button>
+            <button class="btn btn--ghost btn--sm" type="button" data-page="help">❓ 看使用說明</button>
+          </div>
         </div>
       </section>
 
@@ -323,6 +332,134 @@
           <p class="status">記下訂位號碼、要買的伴手禮、待確認事項…；同行的人都可以在每則筆記底下留言討論。</p>
           <div id="memoList" class="memo-list"></div>
         </div>
+      </section>
+
+      <!-- 說明（純靜態，沒有行程也能看） -->
+      <section class="view" id="view-help" hidden>
+
+        <div class="card">
+          <h2 class="card-title">這是什麼</h2>
+          <p class="status">一個給同行者共用的旅遊規劃工具：一起排行程、多幣別記帳自動結算、看每天天氣、列行李、留備忘。
+            所有人的修改都是<strong>即時同步</strong>的 —— 別人改了什麼，你的畫面會自己更新。</p>
+
+          <h3 class="day-head" style="margin-top:16px;">你是哪一種身分？</h3>
+          <div class="admin-list">
+            <div class="admin-row">
+              <div class="admin-row-main">
+                <strong>管理員 <span class="tag">全站唯一</span></strong>
+                <span class="status">建立行程、開設成員帳號、把帳號指派進行程、指定誰是行程管理員、設定誰可編輯或唯讀。</span>
+              </div>
+            </div>
+            <div class="admin-row">
+              <div class="admin-row-main">
+                <strong>可編輯成員</strong>
+                <span class="status">排行程、記帳、列行李、寫備忘、改幣別設定 —— 除了帳號管理以外都能做。</span>
+              </div>
+            </div>
+            <div class="admin-row">
+              <div class="admin-row-main">
+                <strong>唯讀成員 <span class="tag">👀</span></strong>
+                <span class="status">只能瀏覽，新增/編輯的按鈕會直接不顯示。<strong>但仍然可以在備忘錄的筆記底下留言</strong>，
+                  討論不受限制。想改成可編輯，請管理員到「管理 → 帳號管理」切換。</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title">六個分頁在做什麼</h2>
+          <div class="admin-list">
+            <div class="admin-row"><div class="admin-row-main">
+              <strong>🏠 總覽</strong>
+              <span class="status">這趟的儀表板：切換行程、看統計（項目數／總支出／成員數，點了會跳到對應分頁）、接下來的行程、同行夥伴、以及<strong>幣別設定</strong>。第一次進一趟新行程，先來這裡把基準幣別與要用的幣別設好。</span>
+            </div></div>
+            <div class="admin-row"><div class="admin-row-main">
+              <strong>🗺️ 行程</strong>
+              <span class="status">依日期分頁的行程項目。每筆可以填時間、分類、地點與備註；按項目上的「地圖」會把地點帶進下方的 Google 地圖。<strong>地點欄位同時餵給天氣頁</strong>，填了才有天氣看。</span>
+            </div></div>
+            <div class="admin-row"><div class="admin-row-main">
+              <strong>💰 記帳</strong>
+              <span class="status">多幣別支出與分帳，下半部就是結算結果。要記某個幣別的帳，得先在總覽的幣別設定裡加進來。</span>
+            </div></div>
+            <div class="admin-row"><div class="admin-row-main">
+              <strong>⛅ 天氣</strong>
+              <span class="status">自動抓行程裡<strong>每天第一個有地點的項目</strong>，查那個地方當天的預報（Open-Meteo，免費）。也可以在上方手動查任一城市。</span>
+            </div></div>
+            <div class="admin-row"><div class="admin-row-main">
+              <strong>🎒 行李</strong>
+              <span class="status">分類清單，可以指派給某個人，或標記成「共用」（證件、雨傘這種全體共用品）。打勾就是已經收進行李箱了。</span>
+            </div></div>
+            <div class="admin-row"><div class="admin-row-main">
+              <strong>📝 備忘</strong>
+              <span class="status">共筆筆記：訂位編號、伴手禮清單、待確認事項。可以置頂，每則底下都能留言討論。</span>
+            </div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title">不明顯但很好用的操作</h2>
+          <ul class="status" style="padding-left:20px; line-height:1.9;">
+            <li><strong>點一整列就能編輯</strong> —— 行程項目、支出、行李、筆記都是，不用另外找編輯鈕。</li>
+            <li><strong>往左滑可以刪除</strong>（手機）—— 行程、記帳、行李的列往左滑會露出紅色刪除鈕。不想滑的話，點開該列，編輯視窗裡也有刪除。</li>
+            <li><strong>總覽的三個統計數字可以點</strong> —— 直接跳到行程頁、記帳頁，或捲到成員清單。</li>
+            <li><strong>行程項目的「地圖」鈕</strong> —— 把該地點帶進行程頁下方的地圖；右上角「在 Google Maps 開啟行程」則會把整天串成一條路線。</li>
+            <li><strong>唯讀成員也能留言</strong> —— 在備忘錄的筆記底下。</li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title">✨ AI 助手怎麼用</h2>
+          <p class="status">行程、記帳、行李三頁的右上角各有一顆 <strong>✨</strong> 按鈕，天氣頁則是「產生建議」。用講的就可以，不用填表單。</p>
+          <p class="status" style="margin-top:10px;"><strong>最重要的一件事：AI 不會直接改你的資料。</strong>
+            它會把想做的變更列成一張清單，你看過、按了確認，才會真的寫進去。所以放心亂講沒關係。</p>
+          <h3 class="day-head" style="margin-top:16px;">先看一眼「範圍」</h3>
+          <p class="status">對話視窗上方有個範圍下拉，決定這次 AI 動得到哪些東西 —— 行程是「哪一天／整趟」，行李是「誰的／全部」。
+            預設只會動到你正在看的那一天，想大改就先切成整趟。</p>
+          <h3 class="day-head" style="margin-top:16px;">可以這樣講</h3>
+          <div class="ai-msg-eg">
+            <b>行程：</b>「這天太趕了，午餐後多留一小時」<br>「幫我排第三天，想吃在地美食」<br>「把下午的購物行程刪掉」
+          </div>
+          <div class="ai-msg-eg" style="margin-top:8px;">
+            <b>記帳：</b>「早餐 850 我付，大家均分」<br>「昨天的計程車改成 1200」<br>「刪掉重複的那筆門票」
+          </div>
+          <div class="ai-msg-eg" style="margin-top:8px;">
+            <b>行李：</b>「幫我列這趟要帶什麼」<br>「雨具改成 2 支」<br>「把充電器指派給小明」
+          </div>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title">多幣別記帳與結算怎麼算</h2>
+          <p class="status">每筆支出存的是<strong>原幣金額</strong>加上<strong>記帳當下的匯率快照</strong>。
+            這樣之後匯率怎麼波動，都不會回頭改寫你已經記過的帳。</p>
+          <p class="status" style="margin-top:10px;">結算時把每個人「付出去的」與「該分攤的」都換算成基準幣別，
+            算出每人淨額，再湊出<strong>最少筆數的轉帳建議</strong>（誰該付誰多少），不用每筆各自還。</p>
+          <p class="status" style="margin-top:10px;">分帳不一定要均分 —— 可以只勾部分的人，各買各的時也能各自填不同金額。</p>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title">常見問題</h2>
+          <h3 class="day-head">側欄有些分頁灰灰的按不下去？</h3>
+          <p class="status">那是還沒選行程。到總覽的「我的行程」點一趟進去，就會全部亮起來。</p>
+          <h3 class="day-head" style="margin-top:14px;">看不到「＋ 新增」的按鈕？</h3>
+          <p class="status">你是唯讀成員。請管理員到「管理 → 帳號管理」把你切成可編輯。</p>
+          <h3 class="day-head" style="margin-top:14px;">按了 ✨ 沒反應／說 AI 還沒啟用？</h3>
+          <p class="status">AI 要管理員設定 Gemini 金鑰才會動。沒設定不影響其他功能，天氣頁一樣正常。</p>
+          <h3 class="day-head" style="margin-top:14px;">天氣寫「去年同期參考」是什麼意思？</h3>
+          <p class="status">氣象預報只到未來約 16 天。超過的日子沒有預報可用，所以改顯示去年同一天的實測值，讓你抓個大概的冷熱。</p>
+          <h3 class="day-head" style="margin-top:14px;">忘記密碼？</h3>
+          <p class="status">找管理員重設。管理員也可以幫你改顯示名稱。</p>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h2 class="card-title">🎌 想先玩玩看？</h2>
+            <button id="helpDemoBtn" class="btn btn--sm" type="button">建立示範行程</button>
+          </div>
+          <p class="status">會生出一趟資料齊全的假行程（東京箱根鎌倉 5 日）：24 個行程項目、14 筆三種幣別的支出、
+            17 件行李、4 則備忘與留言、4 位成員 —— 每一頁都有東西可以看。出發日固定是今天起算一週後，所以天氣也查得到。</p>
+          <p class="status">重複按就是砍掉重建，可以拿來把示範資料復原。</p>
+        </div>
+
       </section>
 
       <!-- 管理（僅管理員） -->
@@ -739,25 +876,25 @@
   <script type="importmap">
   {
     "imports": {
-      "@/ai.js": "./js/ai.js?v=20260726m",
-      "@/aichat.js": "./js/aichat.js?v=20260726m",
-      "@/auth.js": "./js/auth.js?v=20260726m",
-      "@/constants.js": "./js/constants.js?v=20260726m",
-      "@/expenses.js": "./js/expenses.js?v=20260726m",
-      "@/fx.js": "./js/fx.js?v=20260726m",
-      "@/itinerary.js": "./js/itinerary.js?v=20260726m",
-      "@/memo.js": "./js/memo.js?v=20260726m",
-      "@/packing.js": "./js/packing.js?v=20260726m",
-      "@/settle.js": "./js/settle.js?v=20260726m",
-      "@/supabase.js": "./js/supabase.js?v=20260726m",
-      "@/swipe.js": "./js/swipe.js?v=20260726m",
-      "@/trip.js": "./js/trip.js?v=20260726m",
-      "@/ui.js": "./js/ui.js?v=20260726m",
-      "@/weather.js": "./js/weather.js?v=20260726m"
+      "@/ai.js": "./js/ai.js?v=20260726q",
+      "@/aichat.js": "./js/aichat.js?v=20260726q",
+      "@/auth.js": "./js/auth.js?v=20260726q",
+      "@/constants.js": "./js/constants.js?v=20260726q",
+      "@/expenses.js": "./js/expenses.js?v=20260726q",
+      "@/fx.js": "./js/fx.js?v=20260726q",
+      "@/itinerary.js": "./js/itinerary.js?v=20260726q",
+      "@/memo.js": "./js/memo.js?v=20260726q",
+      "@/packing.js": "./js/packing.js?v=20260726q",
+      "@/settle.js": "./js/settle.js?v=20260726q",
+      "@/supabase.js": "./js/supabase.js?v=20260726q",
+      "@/swipe.js": "./js/swipe.js?v=20260726q",
+      "@/trip.js": "./js/trip.js?v=20260726q",
+      "@/ui.js": "./js/ui.js?v=20260726q",
+      "@/weather.js": "./js/weather.js?v=20260726q"
     }
   }
   </script>
-  <script src="./config.js?v=20260726m"></script>
-  <script type="module" src="./js/app.js?v=20260726m"></script>
+  <script src="./config.js?v=20260726q"></script>
+  <script type="module" src="./js/app.js?v=20260726q"></script>
 </body>
 </html>

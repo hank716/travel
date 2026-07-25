@@ -295,6 +295,15 @@ select[multiple] option { padding: 5px 8px; border-radius: 8px; }
 .my-trip.is-current .my-trip-main { border-color: var(--accent); background: var(--accent-soft); }
 .drawer-foot { border-top: 1px solid var(--line); padding-top: 12px; flex-shrink: 0; }
 
+/* 唯讀成員的記號。body.readonly 由 applyPerms() 切換，寫入按鈕是直接 hidden 掉的——
+   不留個記號的話，唯讀的人只會覺得「按鈕怎麼都不見了」，而不知道是權限。
+   純 CSS 開關，所以不必去搶 applyAccountUI() 對 #drawerAccount 的 textContent。 */
+.readonly-only { display: none; }
+body.readonly .readonly-only { display: block; }
+.readonly-note { margin-bottom: 8px; }
+.readonly-note a { color: var(--accent-dark); }
+.list-hint { margin-top: 10px; }
+
 /* 側欄裡的行程切換器 */
 .drawer-trip { display: flex; align-items: center; gap: 6px; width: 100%; margin-top: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); font-weight: 700; font-size: 14px; text-align: left; padding: 8px 12px; border-radius: var(--radius-sm); cursor: pointer; }
 .drawer-trip #drawerTripTitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

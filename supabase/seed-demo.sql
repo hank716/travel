@@ -3,8 +3,13 @@
 --
 -- 用法：
 --   1. 這份 SQL 在 Supabase SQL Editor 跑一次（安裝函式，可重複執行）。
---   2. 之後在網站「⚙️ 管理 → 行程管理 → 🎌 示範行程」按鈕呼叫；
---      或直接在 SQL Editor 執行 select public.seed_demo_trip();（需以管理員身分）。
+--   2. 之後在網站上按「🎌 示範行程」呼叫 —— 管理頁、說明頁、或還沒有行程時的總覽提示。
+--
+-- 誰可以建：
+--   管理員     可指定行程碼（預設 DEMO），砍掉重建，是給大家看的那一份。
+--   一般成員   忽略傳入的行程碼，一律拿 'DEMO' + 自己 uid 前 6 碼 —— 每人最多一份，
+--              重按就是取代自己那份。這樣「第一次看到這系統的人」不必先找管理員
+--              也能生一趟有資料的行程來玩，同時擋掉無限灌行程。
 --
 -- 涵蓋範圍（對照側欄每一頁）：
 --   總覽 —— 4 位成員（含唯讀）、3 種幣別、統計數字、接下來的行程
@@ -18,14 +23,14 @@
 -- 重複執行 = 砍掉重建（同一組行程碼），可以拿來當「重置示範資料」。
 -- =============================================================================
 
-create or replace function public.seed_demo_trip(p_code text default 'DEMO')
+create or replace function public.seed_demo_trip(p_code text default null)
 returns public.trips
 language plpgsql
 security definer
 set search_path = public
 as $$
 declare
-  v_code text := upper(coalesce(nullif(regexp_replace(trim(p_code), '\s', '', 'g'), ''), 'DEMO'));
+  v_code text;
   v_trip public.trips;
   v_d0   date := current_date + 7;      -- 出發日：永遠是一週後（天氣才抓得到預報）
   -- 成員
@@ -46,8 +51,13 @@ begin
   if auth.uid() is null then
     raise exception 'not authenticated';
   end if;
-  if not private.is_admin() then
-    raise exception 'admin only';
+
+  -- 行程碼：管理員可自選（預設 DEMO）；一般成員只能拿自己那一組，
+  -- 所以不管前端傳什麼進來都覆寫掉 —— 否則任何人都能砍掉別人的 DEMO。
+  if private.is_admin() then
+    v_code := upper(coalesce(nullif(regexp_replace(coalesce(trim(p_code), ''), '\s', '', 'g'), ''), 'DEMO'));
+  else
+    v_code := 'DEMO' || upper(substr(replace(auth.uid()::text, '-', ''), 1, 6));
   end if;
 
   -- 砍掉重建：同一組行程碼永遠只有一趟示範資料（cascade 連帶清乾淨）

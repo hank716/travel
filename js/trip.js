@@ -110,9 +110,10 @@ export async function updateTrip(id, patch) {
   if (error) throw error;
 }
 
-// 建立／重建示範行程（管理員專用）。函式定義在 supabase/seed-demo.sql，
-// 同一組行程碼砍掉重建，所以也等於「重置示範資料」。
-export async function seedDemoTrip(code = "DEMO") {
+// 建立／重建示範行程。函式定義在 supabase/seed-demo.sql，同一組行程碼砍掉重建，
+// 所以也等於「重置示範資料」。code 留空 → 由 RPC 決定：管理員拿共用的 DEMO，
+// 一般成員拿自己專屬的一組（每人限一份，避免被灌爆）。
+export async function seedDemoTrip(code = null) {
   const { data, error } = await supabase.rpc("seed_demo_trip", { p_code: code });
   if (error) throw error;
   return data; // trips row

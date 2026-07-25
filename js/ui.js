@@ -39,5 +39,9 @@ export function humanError(err) {
   if (/not authenticated/i.test(m)) return "身份尚未就緒，請重新整理頁面。";
   if (/RESOURCE_EXHAUSTED|\b429\b/.test(m)) return "AI 今天的免費額度用完了，請稍後再試。";
   if (/不是合法 JSON|全部模型失敗/.test(m)) return "AI 服務異常：" + m;
+  // 以下三種來自 Edge Function（ai-assist），原文是給開發者看的，直接吐出來使用者看不懂
+  if (/尚未設定 GEMINI_API_KEY/.test(m)) return "AI 功能還沒啟用 —— 請管理員設定 Gemini 金鑰。";
+  if (/^未登入$/.test(m)) return "登入逾時，請重新整理頁面。";
+  if (/^僅限管理員$/.test(m)) return "這個功能只有管理員能用。";
   return m;
 }
