@@ -96,3 +96,9 @@ export function pickColor(usedColors = []) {
   const free = MEMBER_COLORS.find((c) => !usedColors.includes(c));
   return free || MEMBER_COLORS[Math.floor(Math.random() * MEMBER_COLORS.length)];
 }
+
+// 本地時區的 YYYY-MM-DD（不要用 toISOString，會被轉成 UTC 而偏一天）
+export function ymd(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+export function todayStr() { return ymd(new Date()); }

@@ -1,12 +1,20 @@
 // 行程項目資料層：CRUD + Realtime。
 import { supabase } from "@/supabase.js";
 
+// 一律照「時間前後」排：日期 → 開始時間 → 結束時間 → sort_order → 建立時間。
+//
+// 沒填時間的要排在當天「最後」（nullsFirst: false）。以前是 nulls first，
+// 沒時間的會插到當天最前面，而它們的 sort_order 又常常都是 0（AI 新增的預設值），
+// 於是退回資料列的實體順序 —— 看起來就變成「照建立時間排」。
+// 最後補 created_at 當定序，同分時順序才不會每次查詢都飄。
 export async function listItems(tripId) {
   const { data, error } = await supabase
     .from("itinerary_items").select("*").eq("trip_id", tripId)
     .order("day_date", { ascending: true, nullsFirst: false })
-    .order("start_time", { ascending: true, nullsFirst: true })
-    .order("sort_order", { ascending: true });
+    .order("start_time", { ascending: true, nullsFirst: false })
+    .order("end_time", { ascending: true, nullsFirst: false })
+    .order("sort_order", { ascending: true })
+    .order("created_at", { ascending: true });
   if (error) throw error;
   return data;
 }

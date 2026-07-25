@@ -1,5 +1,6 @@
 // 行程資料層：建立 / 加入 / 讀取 / 成員 / 啟用幣別 / Realtime。
 import { supabase } from "@/supabase.js";
+import { todayStr } from "@/constants.js";
 
 const LS_KEY = "jp-trip-current"; // 記住目前所在行程
 
@@ -70,11 +71,31 @@ export async function setMemberCanEdit(memberId, canEdit) {
 }
 
 // 我有參與的所有行程（RLS 只會回我是成員的）
+// 行程清單一律照時間排，而且「即將出發」優先：
+//   還沒結束的（含還沒填日期的）依出發日由近到遠在前
+//   已結束的放最後，並以最近結束的在上
+// 不用 created_at：建立順序對使用者沒有意義，想找的永遠是下一趟；
+// 而純時間順序又會讓已結束的舊行程永遠卡在清單最上面。
+// PostgREST 表達不了這種分組排序，所以撈回來在前端排（行程數量本來就很少）。
+const tripEndDay = (t) => t.end_date || t.start_date || "";
+const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+
+export function sortTrips(trips, today = todayStr()) {
+  const ended = (t) => { const e = tripEndDay(t); return !!e && e < today; };
+  return [...(trips || [])].sort((a, b) => {
+    const ea = ended(a), eb = ended(b);
+    if (ea !== eb) return ea ? 1 : -1;                  // 已結束的一律往後
+    if (ea) return cmp(tripEndDay(b), tripEndDay(a));   // 都結束了：最近的在上
+    // 未結束：出發日由近到遠；還沒填日期的排在這一組最後
+    return cmp(a.start_date || "9999-12-31", b.start_date || "9999-12-31")
+      || cmp(a.title || "", b.title || "");             // 同一天出發：照名稱，順序才不會飄
+  });
+}
+
 export async function listMyTrips() {
-  const { data, error } = await supabase
-    .from("trips").select("*").order("created_at", { ascending: false });
+  const { data, error } = await supabase.from("trips").select("*");
   if (error) throw error;
-  return data;
+  return sortTrips(data);
 }
 
 // 刪除整趟行程（cascade 連帶刪除成員/項目/記帳）

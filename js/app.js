@@ -5,6 +5,7 @@ import {
 } from "@/auth.js";
 import {
   CURRENCIES, CURRENCY_CODES, currencyLabel, pickColor, fmtMoney, ZERO_DECIMAL,
+  ymd, todayStr,
 } from "@/constants.js";
 import { getRates, rateToBase } from "@/fx.js";
 import {
@@ -81,6 +82,15 @@ function closePopovers() {
   const am = $("#accountMenu"); if (am) am.hidden = true;
 }
 
+// 行程清單的日期文字。已結束的會被排到最後（見 trip.js 的 sortTrips），
+// 標上「已結束」才不會讓人以為順序壞了。
+function tripWhenHtml(t) {
+  const when = t.start_date ? t.start_date + (t.end_date ? " ~ " + t.end_date : "") : "未設定日期";
+  const end = t.end_date || t.start_date;
+  const done = end && end < todayStr();
+  return `${when}${done ? ' <span class="tag">已結束</span>' : ""}`;
+}
+
 // 頂部切換器文字 / 顯隱（標題只出現在頂部一處）
 function renderTripSwitcher() {
   setHidden("#tripSwitcher", !state.trip);
@@ -100,7 +110,7 @@ async function openTripMenu() {
   html += trips.length ? trips.map((t) => `
     <button class="popover-item ${t.id === cur ? "is-current" : ""}" type="button" data-go="${t.id}">
       ${escapeHtml(t.title)}
-      <span class="sub">${t.start_date ? t.start_date + (t.end_date ? " ~ " + t.end_date : "") : "未設定日期"}</span>
+      <span class="sub">${tripWhenHtml(t)}</span>
     </button>`).join("") : `<div class="popover-head">尚無行程</div>`;
   if (isAdmin()) html += `<div class="popover-sep"></div><button class="popover-item" type="button" data-admin="1">⚙️ 管理行程與帳號</button>`;
   menu.innerHTML = html;
@@ -489,8 +499,9 @@ function tripSummaryHtml(trip) {
 }
 function upcomingHtml(items) {
   if (!items.length) return `<p class="status">還沒有行程項目，到「行程」頁新增，或用 AI 排行程。</p>`;
-  const dated = items.filter((i) => i.day_date)
-    .sort((a, b) => ((a.day_date + (a.start_time || "")) < (b.day_date + (b.start_time || "")) ? -1 : 1));
+  // items 已經由 listItems 依時間排好，這裡只挑出有日期的就好。
+  // （以前這裡自己再排一次，而且沒時間的會用 "" 比大小 → 排到當天最前面，跟行程頁不一致）
+  const dated = items.filter((i) => i.day_date);
   if (!dated.length) return `<p class="status">行程項目尚未排定日期。</p>`;
   const today = todayStr();
   let pick = dated.filter((i) => i.day_date >= today);
@@ -586,7 +597,7 @@ async function renderAdmin() {
     <div class="admin-row">
       <div class="admin-row-main">
         <strong>${escapeHtml(t.title)}</strong>
-        <span class="status">${t.start_date ? t.start_date + " ~ " + (t.end_date || "?") : "未設定日期"}</span>
+        <span class="status">${tripWhenHtml(t)}</span>
       </div>
       <div class="admin-row-actions">
         <button class="btn btn--ghost btn--sm" data-enter-trip="${t.id}">進入</button>
@@ -1657,11 +1668,6 @@ async function onItemDelete() {
 // ---------- 記帳 + 結算 ----------
 const EXP_ICON = { 餐飲: "🍜", 交通: "🚆", 住宿: "🏨", 購物: "🛍️", 門票: "🎟️", 其他: "✨" };
 
-// 本地時區的 YYYY-MM-DD（不要用 toISOString，會被轉成 UTC 而偏一天）
-function ymd(d) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-function todayStr() { return ymd(new Date()); }
 
 async function renderExpenses(trip) {
   const base = trip.base_currency;
@@ -2361,7 +2367,7 @@ function renderMyTrips(trips) {
     <div class="my-trip ${t.id === cur ? "is-current" : ""}">
       <button class="my-trip-main" type="button" data-enter="${t.id}">
         <span class="my-trip-title">${escapeHtml(t.title)}${t.id === cur ? ' <small class="status">· 使用中</small>' : ""}</span>
-        <span class="status">${t.start_date ? t.start_date + (t.end_date ? " ~ " + t.end_date : "") : "未設定日期"}</span>
+        <span class="status">${tripWhenHtml(t)}</span>
       </button>
     </div>`).join("");
   list.querySelectorAll("[data-enter]").forEach((b) =>
