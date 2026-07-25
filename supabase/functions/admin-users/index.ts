@@ -17,7 +17,7 @@ function json(body: unknown, status = 200) {
 
 async function listUsers(admin: SupabaseClient) {
   const [{ data: profs }, usersRes, { data: members }] = await Promise.all([
-    admin.from("profiles").select("id, username, is_admin"),
+    admin.from("profiles").select("id, username, is_admin, display_name"),
     admin.auth.admin.listUsers({ page: 1, perPage: 1000 }),
     admin.from("members").select("id, auth_uid, trip_id, display_name, is_admin, can_edit, trips(id, title)"),
   ]);
@@ -37,9 +37,18 @@ async function listUsers(admin: SupabaseClient) {
   }
   return (profs || []).map((p) => ({
     id: p.id, username: p.username, is_admin: p.is_admin,
+    display_name: p.display_name || p.username || "",
     email: emailById.get(p.id) || "",
     trips: tripsByUid.get(p.id) || [],
   }));
+}
+
+// 帳號改名：profiles 是唯一來源，members.display_name 只是快取副本，一起帶著改，
+// 否則成員清單／付款人／分帳／行李歸屬還會停在舊名字。
+async function setDisplayName(admin: SupabaseClient, userId: string, displayName: string) {
+  const { error } = await admin.from("profiles").update({ display_name: displayName }).eq("id", userId);
+  if (error) throw new Error(error.message);
+  await admin.from("members").update({ display_name: displayName }).eq("auth_uid", userId);
 }
 
 serve(async (req) => {
@@ -77,7 +86,7 @@ serve(async (req) => {
       const email = `${username}@${MEMBER_DOMAIN}`;
       let userId: string | null = null;
       const { data: created, error: cerr } = await admin.auth.admin.createUser({
-        email, password, email_confirm: true, user_metadata: { username },
+        email, password, email_confirm: true, user_metadata: { username, display_name },
       });
       if (cerr) {
         const { data: existing } = await admin.from("profiles").select("id").eq("username", username).maybeSingle();
@@ -87,6 +96,8 @@ serve(async (req) => {
         userId = created.user!.id;
         await admin.from("profiles").update({ username }).eq("id", userId);
       }
+      // 顯示名稱存進帳號本身：之後指派到其他行程時才有得帶，不會退回 username
+      await setDisplayName(admin, userId!, display_name);
       if (trip_id) {
         const { data: dup } = await admin.from("members").select("id").eq("trip_id", trip_id).eq("auth_uid", userId).maybeSingle();
         if (!dup) {
@@ -99,6 +110,13 @@ serve(async (req) => {
         }
       }
       return json({ ok: true, user_id: userId, reused: !!cerr });
+    }
+
+    if (action === "set_display_name") {
+      const display_name = (body.display_name || "").trim();
+      if (!body.user_id || !display_name) return json({ error: "缺少欄位（帳號/顯示名稱）" }, 400);
+      await setDisplayName(admin, body.user_id, display_name);
+      return json({ ok: true });
     }
 
     if (action === "reset_password") {
@@ -126,8 +144,8 @@ serve(async (req) => {
       if (dup) return json({ ok: true, already: true });
       let display_name = (body.display_name || "").trim();
       if (!display_name) {
-        const { data: p } = await admin.from("profiles").select("username").eq("id", user_id).maybeSingle();
-        display_name = p?.username || "成員";
+        const { data: p } = await admin.from("profiles").select("username, display_name").eq("id", user_id).maybeSingle();
+        display_name = p?.display_name || p?.username || "成員";
       }
       const { error } = await admin.from("members").insert({
         trip_id, auth_uid: user_id, display_name, color: "#5E7C58",

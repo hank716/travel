@@ -14,7 +14,7 @@ const CORS = {
 };
 
 // 每次部署遞增。免費方案沒有 log，靠 diag 回傳這個值來確認線上跑的是哪一版。
-const BUILD = "2026-07-25-2";
+const BUILD = "2026-07-26-1";
 
 // Gemini 各世代的 thinking 參數互不相容，傳錯世代 → 400 INVALID_ARGUMENT：
 //   2.5 系列：thinkingConfig.thinkingBudget（0 = 關閉思考）
@@ -256,6 +256,7 @@ function editItineraryPrompt(payload: Record<string, unknown>): string {
     "",
     "規則：",
     "- ref 只能用上面清單裡出現過的代號，不可自己發明；要動的項目不在清單裡就別硬掰，改成在 reply 說明。",
+    "- 上面的清單是唯一的事實來源。你先前說過要做的異動不一定真的成立 —— 使用者可以只勾選其中幾項，甚至一項都不套用。判斷現況一律看清單，不要相信自己上一輪的說法。",
     `- day_date 只能是這些日期：${(scope ? [scope] : days).join("、") || "（依期間）"}。`,
     "- 時間一律 HH:MM 24 小時制。調整某一筆的時間造成後面撞期時，順手把受影響的項目也一起 update，讓整天不重疊、順路。",
     "- 新增項目時盡量把欄位填滿（location_name 要含城市、能被地圖搜尋），只有真的無法判斷才留空字串。",
@@ -267,56 +268,128 @@ function editItineraryPrompt(payload: Record<string, unknown>): string {
   ].filter(Boolean).join("\n");
 }
 
-// 記帳語意解析
-function expensePrompt(payload: Record<string, unknown>): string {
-  const text = (payload.text as string) || "";
-  const members = (payload.members as Array<{ id: string; name: string }>) || [];
+// 對話式編輯記帳。跟行程同一套：用 #n 代號溝通，UUID 不外流。
+// 刻意不讓模型碰匯率與每人分攤金額 —— 那是前端拿即時匯率算出來的，模型給的只會是幻覺。
+function editExpensesPrompt(payload: Record<string, unknown>): string {
+  const trip = (payload.trip ?? {}) as { title?: string; start?: string; end?: string };
+  const items = (payload.items ?? []) as Array<Record<string, unknown>>;
+  const members = (payload.members as string[]) || [];
   const currencies = (payload.currencies as string[]) || [];
   const base = (payload.base as string) || "";
+  const me = (payload.me as string) || "";
+  const today = (payload.today as string) || "";
+  const truncated = !!payload.truncated;
+  const history = (payload.history ?? []) as Array<{ role?: string; text?: string }>;
+  const message = (payload.message as string) || "";
+
+  const itemLines = items.length
+    ? items.map((i) => {
+      const splits = Array.isArray(i.splits) && i.splits.length ? (i.splits as string[]).join("、") : "全員";
+      return `${i.ref} [${i.date || "無日期"}] ${i.description || "(無說明)"}｜${i.amount} ${i.currency}｜${i.category || "未分類"}｜${i.payer || "未指定"} 付｜分帳：${splits}`;
+    }).join("\n")
+    : "（目前沒有任何支出）";
+
+  const historyLines = history.length
+    ? history.map((h) => `${h.role === "user" ? "使用者" : "你"}：${h.text}`).join("\n")
+    : "";
+
   return [
-    "你是記帳助理，把一句話拆成結構化支出。",
-    `成員清單：${members.map((m) => m.name).join("、") || "（無）"}`,
+    `你是「${trip.title ?? "這趟旅行"}」的記帳助理，用對話幫使用者記帳與修正帳目。`,
+    trip.start ? `旅行期間：${trip.start} ~ ${trip.end ?? trip.start}` : "",
+    `今天是 ${today}。使用者說「昨天」「前天」時要換算成實際日期。`,
+    `成員：${members.join("、") || "（無）"}${me ? `；使用者本人是「${me}」，他說「我」就是指這個人` : ""}`,
     `可用幣別：${currencies.join("、") || base}（基準幣別：${base}）`,
-    `句子：「${text}」`,
+    "",
+    `目前的支出${truncated ? "（只列出最近 50 筆，更早的看不到）" : ""}（每筆前面的 #n 是代號，用來指定要動哪一筆）：`,
+    itemLines,
+    historyLines ? `\n先前的對話（用來理解「那筆」「再改一下」這類指代）：\n${historyLines}` : "",
+    "",
+    `使用者這次說：「${message}」`,
+    "",
+    "你可以下三種指令（ops）：",
+    '- 新增：{"op":"create","item":{"description":"拉麵","amount":1200,"currency":"JPY","category":"餐飲","spent_at":"YYYY-MM-DD","paid_by":"名字","splits":["名字","名字"]}}',
+    '- 修改：{"op":"update","ref":"#3","fields":{"amount":350}}',
+    "  fields 只放『真的要改』的欄位，可用欄位：description, amount, currency, category, spent_at, paid_by, splits。",
+    '- 刪除：{"op":"delete","ref":"#5"}',
     "",
     "規則：",
-    "- amount 數字；currency 從可用幣別猜（沒提到就用基準幣別）；",
-    "- category 從 餐飲|交通|住宿|購物|門票|其他 擇一；",
-    "- paid_by 是付款人名字（沒提到就留空字串）；",
-    "- splits 是分攤者名字陣列（『我跟小明分』=我與小明；沒提到就空陣列代表全部均分）；",
-    "- description 簡短說明。",
-    '只輸出 JSON 物件：{"amount":number,"currency":"代碼","category":"類別","description":"說明","paid_by":"名字","splits":["名字"]}。',
-  ].join("\n");
+    "- ref 只能用上面清單裡出現過的代號，不可自己發明；找不到對應的支出就別硬掰，改成在 reply 說明。",
+    "- 上面的清單是唯一的事實來源。你先前說過要做的異動不一定真的成立 —— 使用者可以只勾選其中幾項，甚至一項都不套用。判斷現況一律看清單，不要相信自己上一輪的說法。",
+    "- amount 是正數；currency 只能用上面的可用幣別，沒提到就用基準幣別。",
+    "- category 從 餐飲|交通|住宿|購物|門票|其他 擇一。",
+    "- spent_at 一律 YYYY-MM-DD，沒提到就用今天。",
+    "- paid_by 與 splits 都寫「名字」，只能用上面的成員名字；splits 給空陣列代表全員均分。",
+    "- **不要輸出匯率、換算後金額或每人分攤金額**，那些由系統計算。",
+    "- 一句話裡有好幾筆（如「早餐 300、計程車 800」）就拆成多個 create。",
+    "- 使用者只是提問或閒聊（如「這趟餐飲花多少？」），就回空的 ops，只用 reply 回答。",
+    "",
+    "reply：用繁體中文一到三句，具體說明你做了什麼或為什麼不做，不要客套開場白。",
+    '只輸出 JSON 物件：{"reply":"…","ops":[…]}。ops 沒有異動時給空陣列。',
+  ].filter(Boolean).join("\n");
 }
 
-// AI 建議行李：吃天氣摘要 + 行程活動 + 偏好，產生要帶什麼。天氣模組不知道行李存在，
-// 這裡只是把天氣當輸入參數的「推薦引擎」。
-function packingPrompt(payload: Record<string, unknown>): string {
+// 對話式編輯行李。除了 #n 代號那一套，還吃天氣摘要與行程活動當情境
+// —— 天氣模組不知道行李存在，這裡只是把天氣當輸入參數的「推薦引擎」。
+function editPackingPrompt(payload: Record<string, unknown>): string {
   const trip = (payload.trip ?? {}) as { title?: string; start?: string; end?: string };
+  const items = (payload.items ?? []) as Array<Record<string, unknown>>;
+  const members = (payload.members as string[]) || [];
+  const scopeLabel = (payload.scope_label as string) || "";
   const days = (payload.days ?? []) as Array<Record<string, unknown>>;
   const itinerary = (payload.itinerary as string[]) || [];
-  const preferences = (payload.preferences as string) || "";
-  const forMember = (payload.for_member as string) || "";
+  const history = (payload.history ?? []) as Array<{ role?: string; text?: string }>;
+  const message = (payload.message as string) || "";
+
+  const itemLines = items.length
+    ? items.map((i) => {
+      const extra = [i.note].filter(Boolean).join("｜");
+      return `${i.ref} [${i.owner}] ${i.name} ×${i.qty}（${i.category || "未分類"}${i.checked ? "｜已打包" : ""}${extra ? `｜${extra}` : ""}）`;
+    }).join("\n")
+    : "（目前這個範圍內沒有任何物品）";
+
   const weatherLines = days.length
     ? days.map((d) => `- ${d.date} ${d.city ?? ""}：${d.condition ?? ""}，氣溫 ${d.tmin ?? "?"}~${d.tmax ?? "?"}°C，降雨機率 ${d.pop ?? "?"}%`).join("\n")
     : "（無天氣資料，依季節常識判斷）";
+
+  const historyLines = history.length
+    ? history.map((h) => `${h.role === "user" ? "使用者" : "你"}：${h.text}`).join("\n")
+    : "";
+
   return [
-    `你是旅遊行李顧問。請為「${trip.title ?? "這趟旅行"}」整理一份「要帶什麼」的行李清單。`,
-    trip.start ? `期間：${trip.start} ~ ${trip.end ?? ""}` : "",
-    forMember ? `這份清單是給：${forMember}` : "這份清單是「全體共用」物品（如證件、藥品、共用充電器等）。",
+    `你是「${trip.title ?? "這趟旅行"}」的行李管家，用對話幫使用者整理行李清單。`,
+    trip.start ? `旅行期間：${trip.start} ~ ${trip.end ?? trip.start}` : "",
+    `成員：${members.join("、") || "（無）"}。物品可以指派給某個人，也可以是「共用」（全體共用品，如證件、雨傘、轉接頭）。`,
+    scopeLabel
+      ? `★目前範圍：只有「${scopeLabel}」的物品★。所有異動都只能發生在這個歸屬，別人的物品一律不准碰，新增的也一定屬於「${scopeLabel}」。使用者提到別人時要婉拒，並在 reply 裡告訴他解法：把視窗上方的範圍選單改成「全部」就能一次動所有人 —— 只說不行、不給解法是不合格的回答。`
+      : "目前範圍：全部。新增物品時用 member 指定歸屬（成員名字，或「共用」）。",
     "",
     "每天天氣：",
     weatherLines,
     itinerary.length ? `\n行程活動（依此判斷要帶的裝備，如登山→登山鞋、海邊→泳具）：${itinerary.join("、")}` : "",
-    preferences ? `\n使用者偏好/補充：${preferences}` : "",
+    "",
+    "目前的行李（每筆前面的 #n 是代號，[] 裡是歸屬）：",
+    itemLines,
+    historyLines ? `\n先前的對話（用來理解「那個」「再多帶一件」這類指代）：\n${historyLines}` : "",
+    "",
+    `使用者這次說：「${message}」`,
+    "",
+    "你可以下三種指令（ops）：",
+    '- 新增：{"op":"create","item":{"name":"折疊傘","category":"其他","qty":1,"member":"共用","note":"降雨機率高"}}',
+    '- 修改：{"op":"update","ref":"#3","fields":{"qty":2}}',
+    "  fields 只放『真的要改』的欄位，可用欄位：name, category, qty, note, member, checked。",
+    '- 刪除：{"op":"delete","ref":"#5"}',
     "",
     "規則：",
-    "- 依天氣給衣物（低溫→保暖外套、降雨→雨具、高溫高UV→防曬）；依行程活動給對應裝備；",
-    "- category 從 衣物|證件|電子|盥洗|藥品|其他 擇一；qty 給合理數量（整數）；",
-    forMember ? "- 以該成員個人會用到的東西為主，不要列全體共用品。" : "- 以全體會共用的東西為主（證件、藥品、轉接頭、雨傘等），不要列個人貼身衣物。",
-    "- note 一句話說明為什麼帶（如「降雨機率高」「9月東京早晚涼」）。",
-    "- 控制在 8~16 項，務實、不要湊數。",
-    '只輸出 JSON 陣列：[{"name":"物品名","category":"衣物|證件|電子|盥洗|藥品|其他","qty":1,"note":"一句原因"}]。',
+    "- ref 只能用上面清單裡出現過的代號，不可自己發明；找不到就別硬掰，改成在 reply 說明。",
+    "- 上面的清單是唯一的事實來源。你先前說過要做的異動不一定真的成立 —— 使用者可以只勾選其中幾項，甚至一項都不套用。判斷現況一律看清單，不要相信自己上一輪的說法。",
+    "- category 從 衣物|證件|電子|盥洗|藥品|其他 擇一；qty 是 ≥1 的整數。",
+    "- member 只能寫上面的成員名字或「共用」。checked 是 true/false（打包好了沒）。",
+    "- 使用者要「幫我列要帶什麼」時：依天氣給衣物（低溫→保暖外套、降雨→雨具、高溫高UV→防曬）、依行程活動給裝備，note 寫一句為什麼帶（如「降雨機率高」「9月東京早晚涼」），控制在 8~16 項，務實不要湊數，且不要重複已經在清單裡的東西。",
+    "- 歸屬是「共用」時以全體會共用的東西為主（證件、藥品、轉接頭、雨傘），不要列個人貼身衣物；歸屬是某個人時反過來。",
+    "- 使用者只是提問或閒聊，就回空的 ops，只用 reply 回答。",
+    "",
+    "reply：用繁體中文一到三句，具體說明你做了什麼或為什麼不做，不要客套開場白。",
+    '只輸出 JSON 物件：{"reply":"…","ops":[…]}。ops 沒有異動時給空陣列。',
   ].filter(Boolean).join("\n");
 }
 
@@ -357,13 +430,17 @@ serve(async (req) => {
           _model: model,
         });
       }
-      case "parse_expense": {
-        const { text, model } = await gemini(expensePrompt(payload), { jsonOut: true, maxTokens: 2048, mode });
-        return json({ parsed: parseJson(text, mode), _model: model });
-      }
-      case "suggest_packing": {
-        const { text, model } = await gemini(packingPrompt(payload), { jsonOut: true, maxTokens: 4096, mode });
-        return json({ items: asArray(parseJson(text, mode), "items"), _model: model });
+      // 記帳／行李的對話式編輯：回傳格式與 edit_itinerary 一致，前端共用同一套外殼
+      case "edit_expenses":
+      case "edit_packing": {
+        const prompt = mode === "edit_expenses" ? editExpensesPrompt(payload) : editPackingPrompt(payload);
+        const { text, model } = await gemini(prompt, { jsonOut: true, maxTokens: 8192, mode });
+        const parsed = parseJson(text, mode) as Record<string, unknown>;
+        return json({
+          reply: String(parsed?.reply ?? ""),
+          ops: asArray(parsed, "ops", "operations"),
+          _model: model,
+        });
       }
       default:
         return json({ error: `不支援的 mode：${mode ?? "(空)"}` }, 400);

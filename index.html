@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#FFF4E8" />
   <title>旅程規劃 · Trip Planner</title>
-  <link rel="stylesheet" href="./css/app.css?v=20260725b" />
+  <link rel="stylesheet" href="./css/app.css?v=20260726d" />
 </head>
 <body>
   <header class="topbar">
@@ -41,7 +41,11 @@
     </nav>
     <div class="drawer-foot">
       <div id="drawerAccount" class="status" style="margin-bottom:8px;"></div>
-      <button id="logoutBtn" class="btn btn--ghost btn--sm" type="button">登出</button>
+      <!-- 桌機的 #accountBtn 被 CSS 藏起來（帳號相關一律走側欄），帳號設定入口要在這裡也有一份 -->
+      <div class="row" style="gap:8px;">
+        <button id="drawerProfileBtn" class="btn btn--ghost btn--sm" type="button">⚙️ 帳號設定</button>
+        <button id="logoutBtn" class="btn btn--ghost btn--sm" type="button">登出</button>
+      </div>
     </div>
   </aside>
 
@@ -225,11 +229,10 @@
         <div class="card">
           <div class="card-head">
             <h2 class="card-title">記帳</h2>
-            <button id="addExpenseBtn" class="btn btn--sm" type="button">＋ 新增支出</button>
-          </div>
-          <div class="add-currency" style="margin-bottom:14px;">
-            <input id="nlExpenseInput" placeholder="用一句話記帳：拉麵 1200 我跟小明分" />
-            <button id="nlExpenseBtn" class="btn btn--ghost btn--sm" type="button">✨ 解析</button>
+            <div style="display:flex; gap:8px;">
+              <button id="aiExpenseBtn" class="btn btn--ghost btn--sm" type="button">✨ AI 記帳</button>
+              <button id="addExpenseBtn" class="btn btn--sm" type="button">＋ 新增支出</button>
+            </div>
           </div>
           <div id="expenseSummary" class="expense-summary"></div>
           <div id="expenseList" class="expense-list"></div>
@@ -276,7 +279,7 @@
           <div class="card-head">
             <h2 class="card-title">行李清單 <span id="packingProgress" class="status"></span></h2>
             <div style="display:flex; gap:8px;">
-              <button id="aiPackingBtn" class="btn btn--ghost btn--sm" type="button">✨ AI 建議</button>
+              <button id="aiPackingBtn" class="btn btn--ghost btn--sm" type="button">✨ AI 助手</button>
               <button id="addPackingBtn" class="btn btn--sm" type="button">＋ 新增物品</button>
             </div>
           </div>
@@ -480,14 +483,14 @@
       </div>
     </div>
 
-    <!-- AI 助手（對話式排／改行程）Modal -->
-    <div id="aiItinModal" class="modal" hidden>
+    <!-- 對話式 AI 助手 Modal（行程／記帳／行李共用同一個視窗，內容由 js/aichat.js 換）-->
+    <div id="aiChatModal" class="modal" hidden>
       <div class="modal-box modal-box--chat card">
         <div class="card-head">
-          <h2 class="card-title">✨ AI 助手</h2>
+          <h2 id="aiChatTitle" class="card-title">✨ AI 助手</h2>
           <div class="ai-chat-head">
-            <select id="aiItinDay" class="ai-chat-scope"></select>
-            <button id="aiItinClose" class="btn btn--ghost btn--sm" type="button">✕</button>
+            <select id="aiChatScope" class="ai-chat-scope" hidden></select>
+            <button id="aiChatClose" class="btn btn--ghost btn--sm" type="button">✕</button>
           </div>
         </div>
         <div id="aiChatLog" class="ai-chat-log"></div>
@@ -496,7 +499,7 @@
             placeholder="說說你想怎麼改…（Enter 送出、Shift+Enter 換行）"></textarea>
           <button id="aiChatSend" class="btn btn--sm" type="button">送出</button>
         </div>
-        <p class="status ai-chat-hint">AI 提出的變更會先列成清單，你確認後才會寫入行程。</p>
+        <p id="aiChatHint" class="status ai-chat-hint">AI 提出的變更會先列成清單，你確認後才會寫入。</p>
       </div>
     </div>
 
@@ -536,26 +539,6 @@
           </div>
           <p id="packingError" class="status" data-ok="false" hidden></p>
         </form>
-      </div>
-    </div>
-
-    <!-- AI 建議行李 Modal -->
-    <div id="aiPackingModal" class="modal" hidden>
-      <div class="modal-box card">
-        <div class="card-head">
-          <h2 class="card-title">✨ AI 建議行李</h2>
-          <button id="aiPackingClose" class="btn btn--ghost btn--sm" type="button">✕</button>
-        </div>
-        <label style="display:block; font-size:14px; font-weight:600; color:var(--muted); margin-bottom:10px;">這份清單給誰
-          <select id="aiPackingMember" style="margin-top:6px;"></select>
-        </label>
-        <textarea id="aiPackingPrefs" class="ai-itin-input" rows="4"
-          placeholder="補充偏好（如：親子、登山、極簡、怕冷）。留空也可以，AI 會依天氣與行程判斷。"></textarea>
-        <div class="row" style="justify-content:flex-end; margin:10px 0;">
-          <button id="aiPackingGo" class="btn btn--sm" type="button">產生</button>
-        </div>
-        <p class="status">AI 會依各日天氣與行程活動，給一份要帶什麼的清單；可逐項或一鍵全部加入。</p>
-        <div id="aiPackingOut" class="packing-list" style="margin-top:10px;"></div>
       </div>
     </div>
 
@@ -603,6 +586,70 @@
       </div>
     </div>
 
+    <!-- 改顯示名稱 Modal（管理員改別人） -->
+    <div id="renameModal" class="modal" hidden>
+      <div class="modal-box card">
+        <div class="card-head">
+          <h2 class="card-title">改顯示名稱</h2>
+          <button id="renameClose" class="btn btn--ghost btn--sm" type="button">✕</button>
+        </div>
+        <form id="renameForm" class="form">
+          <input type="hidden" name="user_id" />
+          <p class="status">目前：<strong id="renameUser"></strong></p>
+          <label>新的顯示名稱
+            <input name="display_name" maxlength="20" placeholder="小明" required />
+          </label>
+          <small class="status">會同步更新這個帳號在所有行程裡的名字。</small>
+          <div class="row" style="justify-content:flex-end;">
+            <button type="button" id="renameCancel" class="btn btn--ghost">取消</button>
+            <button class="btn" type="submit">儲存</button>
+          </div>
+          <p id="renameError" class="status" data-ok="false" hidden></p>
+        </form>
+      </div>
+    </div>
+
+    <!-- 帳號設定（本人）：顯示名稱 + 改密碼。兩段各自送出、各自報錯，互不影響。 -->
+    <div id="profileModal" class="modal" hidden>
+      <div class="modal-box card">
+        <div class="card-head">
+          <h2 class="card-title">⚙️ 帳號設定</h2>
+          <button id="profileClose" class="btn btn--ghost btn--sm" type="button">✕</button>
+        </div>
+        <p class="status">登入帳號：<strong id="profileAccount"></strong>（不可更改）</p>
+
+        <form id="profileNameForm" class="form" style="margin-top:12px;">
+          <label>顯示名稱
+            <input name="display_name" maxlength="20" placeholder="小明" required autocomplete="nickname" />
+          </label>
+          <small class="status">這是其他人在成員清單、付款人、分帳、行李歸屬看到的名字。</small>
+          <div class="row" style="justify-content:flex-end;">
+            <button class="btn btn--sm" type="submit">儲存名稱</button>
+          </div>
+          <p id="profileNameError" class="status" data-ok="false" hidden></p>
+        </form>
+
+        <h3 class="day-head" style="margin-top:18px;">修改密碼</h3>
+        <form id="profilePwForm" class="form">
+          <label>目前密碼
+            <input name="current" type="password" required autocomplete="current-password" />
+          </label>
+          <div class="row">
+            <label>新密碼
+              <input name="next" type="password" minlength="6" placeholder="至少 6 碼" required autocomplete="new-password" />
+            </label>
+            <label>再輸入一次
+              <input name="confirm" type="password" minlength="6" required autocomplete="new-password" />
+            </label>
+          </div>
+          <div class="row" style="justify-content:flex-end;">
+            <button class="btn btn--sm" type="submit">更新密碼</button>
+          </div>
+          <p id="profilePwError" class="status" data-ok="false" hidden></p>
+        </form>
+      </div>
+    </div>
+
     <!-- 通用確認 Modal -->
     <div id="confirmModal" class="modal" hidden>
       <div class="modal-box card">
@@ -628,7 +675,7 @@
 
   <div id="toast" class="toast" hidden></div>
 
-  <script src="./config.js?v=20260725b"></script>
-  <script type="module" src="./js/app.js?v=20260725b"></script>
+  <script src="./config.js?v=20260726d"></script>
+  <script type="module" src="./js/app.js?v=20260726d"></script>
 </body>
 </html>

@@ -30,6 +30,11 @@ create table if not exists public.profiles (
   created_at timestamptz not null default now()
 );
 
+-- 顯示名稱＝帳號層級的「人看的名字」（username 是登入用的帳號，不該拿來當稱呼）。
+-- members.display_name 從此只是這裡的快取副本：建立成員列時帶入，改名時串接更新。
+alter table public.profiles add column if not exists display_name text;
+update public.profiles set display_name = username where display_name is null;
+
 -- 唯一管理員（寫死）。若要更換，改這裡 + config.js 的 ADMIN_EMAIL。
 -- 新使用者註冊 → 建立 profile；只有寫死的 Email 會是管理員，其餘一律 false。
 create or replace function private.handle_new_user()
@@ -39,11 +44,12 @@ security definer
 set search_path = public
 as $$
 begin
-  insert into public.profiles (id, username, is_admin)
+  insert into public.profiles (id, username, is_admin, display_name)
   values (
     new.id,
     new.raw_user_meta_data ->> 'username',
-    lower(new.email) = 'hank.wang.716@gmail.com'
+    lower(new.email) = 'hank.wang.716@gmail.com',
+    coalesce(new.raw_user_meta_data ->> 'display_name', new.raw_user_meta_data ->> 'username')
   )
   on conflict (id) do nothing;
   return new;
@@ -422,6 +428,19 @@ drop policy if exists profiles_self on public.profiles;
 create policy profiles_self on public.profiles for select
   to authenticated
   using (id = auth.uid() or private.is_admin());
+
+-- 本人可改自己的 profile（帳號設定改顯示名稱用）。
+-- ⚠️ RLS 是「整列」層級的，擋不住欄位——光有這條政策，使用者就能自己把 is_admin 設成 true。
+-- Supabase 預設給 authenticated 整張表的 UPDATE，所以必須收掉再用欄位層級 grant 只放行 display_name。
+-- 管理員改別人的名字走 admin-users Edge Function（service_role），不靠這條。
+drop policy if exists profiles_update_self on public.profiles;
+create policy profiles_update_self on public.profiles for update
+  to authenticated
+  using (id = auth.uid())
+  with check (id = auth.uid());
+
+revoke update on public.profiles from authenticated;
+grant  update (display_name) on public.profiles to authenticated;
 
 -- trips：成員可讀；全域 admin 唯讀可視（即使不參加也看得到）；可編輯成員可改設定；
 -- 建立走 RPC，不開放直接 INSERT。

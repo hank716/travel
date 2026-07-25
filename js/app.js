@@ -1,5 +1,8 @@
 // Phase 1 控制器：路由（加入畫面 ↔ 行程主畫面）、表單、即時成員/幣別。
-import { login, logout, getSession, getProfile, onAuthChange } from "./auth.js";
+import {
+  login, logout, getSession, getProfile, onAuthChange,
+  updateMyDisplayName, changeMyPassword,
+} from "./auth.js";
 import {
   CURRENCIES, CURRENCY_CODES, currencyLabel, pickColor, fmtMoney, ZERO_DECIMAL,
 } from "./constants.js";
@@ -17,6 +20,8 @@ import {
 import { computeBalances, currencyTotals, settleUp, splitEqually } from "./settle.js";
 import { loadItineraryWeather, loadCityWeather, getWeatherSummaries } from "./weather.js";
 import { callAI } from "./ai.js";
+import { escapeHtml, escapeAttr, toast, humanError } from "./ui.js";
+import { openAiChat, closeAiChat, bindAiChat } from "./aichat.js";
 import {
   getSavedTrip, saveTrip, clearSavedTrip,
   createTrip, getTrip, getMyMember,
@@ -113,14 +118,75 @@ function openAccountMenu() {
   const menu = $("#accountMenu");
   if (!menu.hidden) { menu.hidden = true; return; }
   $("#tripMenu").hidden = true;
-  const p = state.profile;
-  const name = p ? (p.username || p.email || "使用者") : "使用者";
   menu.innerHTML = `
-    <div class="popover-head">${escapeHtml(name)}${isAdmin() ? "（管理員）" : ""}</div>
+    <div class="popover-head">${escapeHtml(accountName())}${isAdmin() ? "（管理員）" : ""}</div>
     <div class="popover-sep"></div>
+    <button class="popover-item" type="button" data-profile="1">⚙️ 帳號設定</button>
     <button class="popover-item" type="button" data-logout="1">登出</button>`;
+  menu.querySelector("[data-profile]").onclick = () => { closePopovers(); openProfileModal(); };
   menu.querySelector("[data-logout]").onclick = async () => { closePopovers(); await logout(); showLogin(); };
   menu.hidden = false;
+}
+
+// ---------- 帳號設定（本人）----------
+// username 是登入用的帳號（jay0901），display_name 才是給人看的稱呼（Jay）。
+function accountName() {
+  const p = state.profile;
+  return p ? (p.display_name || p.username || p.email || "使用者") : "使用者";
+}
+
+function openProfileModal() {
+  const p = state.profile;
+  if (!p) return;
+  setText("#profileAccount", p.username || p.email || "—");
+  const nf = $("#profileNameForm"); nf.reset();
+  nf.display_name.value = p.display_name || p.username || "";
+  $("#profileNameError").hidden = true;
+  $("#profilePwForm").reset();
+  $("#profilePwError").hidden = true;
+  $("#profileModal").hidden = false;
+}
+
+async function onProfileNameSubmit(e) {
+  e.preventDefault();
+  const f = e.target;
+  const err = $("#profileNameError"); err.hidden = true;
+  const name = f.display_name.value.trim();
+  if (!name) { err.textContent = "請輸入顯示名稱"; err.hidden = false; return; }
+  try {
+    setBusy(f, true);
+    await updateMyDisplayName(name);
+    state.profile.display_name = name;
+    applyAccountUI();
+    await refreshMemberViews();
+    if (!$("#view-admin").hidden) await renderAdmin();
+    toast("已更新顯示名稱");
+    $("#profileModal").hidden = true;
+  } catch (e2) {
+    err.textContent = humanError(e2); err.hidden = false;
+  } finally { setBusy(f, false); }
+}
+
+async function onProfilePwSubmit(e) {
+  e.preventDefault();
+  const f = e.target;
+  const err = $("#profilePwError"); err.hidden = true;
+  const show = (m) => { err.textContent = m; err.hidden = false; };
+  const current = f.current.value;
+  const next = f.next.value;
+  if (next.length < 6) return show("新密碼至少 6 碼。");
+  if (next !== f.confirm.value) return show("兩次輸入的新密碼不一致。");
+  if (next === current) return show("新密碼與目前密碼相同。");
+  try {
+    setBusy(f, true);
+    await changeMyPassword(current, next);
+    f.reset();
+    toast("密碼已更新");
+    $("#profileModal").hidden = true;
+  } catch (e2) {
+    // changeMyPassword 對舊密碼錯誤已有明確訊息，別讓 loginErr 翻成籠統的「帳號或密碼錯誤」
+    show(e2?.code === "bad_current_password" ? e2.message : humanError(e2));
+  } finally { setBusy(f, false); }
 }
 
 async function ensureWeather(force = false) {
@@ -241,6 +307,15 @@ async function onCreateSubmit(e) {
     });
     saveTrip(trip);
     closeTripModal();
+    // 管理員第一次建行程時填的「你的名字」就是他的顯示名稱：帳號還沒取過名字時順手同步，
+    // 免得頂部顯示登入帳號、行程裡卻是另一個名字。
+    const p = state.profile;
+    if (join && p && (!p.display_name || p.display_name === p.username)) {
+      const typed = f.name.value.trim();
+      if (typed && typed !== p.display_name) {
+        try { await updateMyDisplayName(typed); p.display_name = typed; applyAccountUI(); } catch { /* 非關鍵，失敗就算了 */ }
+      }
+    }
     if (join) {
       await enterTrip(trip.id);
     } else {
@@ -269,6 +344,7 @@ async function enterTrip(tripId) {
   if (frame) { frame.hidden = true; frame.removeAttribute("src"); }
   setText("#mapTitle", "點行程項目的「地圖」即可在此顯示");
   state.weatherLoaded = false;
+  packCtxCache = null;     // 換行程了，行李 AI 的天氣/行程情境要重抓
   await renderTrip(trip);
   await renderItinerary(trip);
   await renderExpenses(trip);
@@ -287,6 +363,7 @@ async function enterTrip(tripId) {
   // 即時：行程項目變動就重畫（天氣只標記失效，下次開或按重新整理才重載，避免座標回寫造成連環重載）
   unsubItin = subscribeItinerary(tripId, () => {
     state.weatherLoaded = false;
+    packCtxCache = null;   // 行程改了，行李 AI 看到的活動也要跟著更新
     renderItinerary(trip).catch(console.error);
     renderDashboard().catch(() => {});
   });
@@ -356,14 +433,22 @@ function applyPerms() {
   const editable = canEdit();
   document.body.classList.toggle("readonly", !editable);
   // 各分頁主要寫入按鈕（不存在就略過）
-  ["#addItemBtn", "#aiItinBtn", "#addExpenseBtn", "#addPackingBtn", "#aiPackingBtn"]
+  ["#addItemBtn", "#aiItinBtn", "#addExpenseBtn", "#aiExpenseBtn", "#addPackingBtn", "#aiPackingBtn"]
     .forEach((sel) => setHidden(sel, !editable));
   // 基準幣別下拉：唯讀時停用（保留標籤文字）
   const baseSel = $("#baseSelect"); if (baseSel) baseSel.disabled = !editable;
-  // 記帳語意輸入列（含輸入框）
-  const nl = $("#nlExpenseInput"); if (nl) { const row = nl.closest(".add-currency"); if (row) row.hidden = !editable; }
   // 幣別新增列
   const addCur = $("#addCurrencySelect"); if (addCur) { const row = addCur.closest(".add-currency"); if (row) row.hidden = !editable; }
+}
+
+// 有人改了顯示名稱之後要重畫的地方。renderTrip 只管成員卡，
+// 但付款人、分帳、結算、行李歸屬也都吃 display_name，得一起刷。
+async function refreshMemberViews() {
+  if (!state.trip) return;
+  await renderTrip(state.trip).catch(() => {});
+  await renderExpenses(state.trip).catch(() => {});
+  await renderPacking(state.trip).catch(() => {});
+  renderDashboard().catch(() => {});
 }
 
 // 設某成員為行程管理員
@@ -518,11 +603,13 @@ async function renderAdmin() {
   try {
     const { users } = await adminAction("list_users");
     const tripTitle = (id) => trips.find((t) => t.id === id)?.title || "?";
-    uBox.innerHTML = (users || []).map((u) => `
+    uBox.innerHTML = (users || []).map((u) => {
+      const shown = u.display_name || u.username || u.email || "?";
+      return `
       <div class="admin-row">
         <div class="admin-row-main">
-          <strong>${escapeHtml(u.username || u.email || "?")}</strong>${u.is_admin ? ' <span class="tag">管理員</span>' : ""}
-          <span class="status">${escapeHtml(u.email || "")}</span>
+          <strong>${escapeHtml(shown)}</strong>${u.is_admin ? ' <span class="tag">管理員</span>' : ""}
+          <span class="status">${escapeHtml(u.username ? "@" + u.username : "")}${u.email ? " · " + escapeHtml(u.email) : ""}</span>
           <div class="admin-trips">${(u.trips || []).map((t) => {
             const roleTag = t.is_admin ? ' <span class="tag">管理員</span>'
               : (t.can_edit === false ? ' <span class="tag">唯讀</span>' : '');
@@ -534,11 +621,13 @@ async function renderAdmin() {
           }).join("") || '<span class="status">未指派任何行程</span>'}</div>
         </div>
         <div class="admin-row-actions">
-          ${u.is_admin ? "" : `<button class="btn btn--ghost btn--sm" data-assign="${u.id}" data-name="${escapeAttr(u.username || u.email)}">指派行程</button>`}
-          <button class="btn btn--ghost btn--sm" data-reset="${u.id}" data-name="${escapeAttr(u.username || u.email)}">重設密碼</button>
-          ${u.is_admin ? "" : `<button class="btn btn--ghost btn--sm" data-deluser="${u.id}" data-name="${escapeAttr(u.username || u.email)}">刪除</button>`}
+          <button class="btn btn--ghost btn--sm" data-rename="${u.id}" data-name="${escapeAttr(shown)}">改名稱</button>
+          ${u.is_admin ? "" : `<button class="btn btn--ghost btn--sm" data-assign="${u.id}" data-name="${escapeAttr(shown)}">指派行程</button>`}
+          <button class="btn btn--ghost btn--sm" data-reset="${u.id}" data-name="${escapeAttr(shown)}">重設密碼</button>
+          ${u.is_admin ? "" : `<button class="btn btn--ghost btn--sm" data-deluser="${u.id}" data-name="${escapeAttr(shown)}">刪除</button>`}
         </div>
-      </div>`).join("") || `<p class="status">尚無帳號。</p>`;
+      </div>`;
+    }).join("") || `<p class="status">尚無帳號。</p>`;
 
     uBox.querySelectorAll("[data-unassign]").forEach((b) => (b.onclick = async () => {
       const [user_id, trip_id] = b.dataset.unassign.split("|");
@@ -554,6 +643,8 @@ async function renderAdmin() {
       const [member_id, canNext] = b.dataset.tripCanedit.split("|");
       try { await adminAction("set_member_can_edit", { member_id, can_edit: canNext === "1" }); toast(canNext === "1" ? "已設為可編輯" : "已設為唯讀"); await renderAdmin(); } catch (e) { toast(humanError(e), false); }
     }));
+    uBox.querySelectorAll("[data-rename]").forEach((b) => (b.onclick = () =>
+      openRename(b.dataset.rename, b.dataset.name)));
     uBox.querySelectorAll("[data-assign]").forEach((b) => (b.onclick = () =>
       openAssignTrip(b.dataset.assign, b.dataset.name)));
     uBox.querySelectorAll("[data-reset]").forEach((b) => (b.onclick = () =>
@@ -620,6 +711,33 @@ async function onAssignTripSubmit(e) {
   finally { setBusy(f, false); }
 }
 
+// 改顯示名稱 Modal（管理員改別人）。改完連同該帳號在所有行程的 members 列一起更新。
+function openRename(user_id, name) {
+  const f = $("#renameForm");
+  f.reset(); $("#renameError").hidden = true;
+  f.user_id.value = user_id;
+  f.display_name.value = name || "";
+  setText("#renameUser", name || "");
+  $("#renameModal").hidden = false;
+}
+async function onRenameSubmit(e) {
+  e.preventDefault();
+  const f = e.target; const err = $("#renameError"); err.hidden = true;
+  const display_name = f.display_name.value.trim();
+  if (!display_name) { err.textContent = "請輸入顯示名稱"; err.hidden = false; return; }
+  try {
+    setBusy(f, true);
+    await adminAction("set_display_name", { user_id: f.user_id.value, display_name });
+    $("#renameModal").hidden = true;
+    toast("已更新顯示名稱");
+    // 改到自己就順手更新頂部與抽屜
+    if (f.user_id.value === state.profile?.id) { state.profile.display_name = display_name; applyAccountUI(); }
+    await renderAdmin();
+    await refreshMemberViews();
+  } catch (e2) { err.textContent = humanError(e2); err.hidden = false; }
+  finally { setBusy(f, false); }
+}
+
 // 重設密碼 Modal
 function openResetPw(user_id, name) {
   const f = $("#resetPwForm");
@@ -664,6 +782,7 @@ function loginErr(err) {
 function showLogin() {
   document.body.classList.remove("in-trip");
   closePopovers();
+  closeAiChat();          // 對話裡有這趟的資料，登出就清掉
   state.profile = null; state.trip = null;
   $("#tripSwitcher").hidden = true; $("#tripSwitcherTitle").textContent = "";
   $("#accountBtn").hidden = true;
@@ -680,7 +799,7 @@ async function onLoginSubmit(e) {
 }
 function applyAccountUI() {
   const p = state.profile;
-  const name = p ? (p.username || p.email || "使用者") : "";
+  const name = p ? accountName() : "";
   setText("#drawerAccount", p ? `${name}${isAdmin() ? "（管理員）" : ""}` : "");
   // 頂部帳號鈕（手機登出入口）
   setHidden("#accountBtn", !p);
@@ -700,11 +819,10 @@ async function onLoggedIn() {
 }
 
 // ---------- AI 助手（對話式排／改行程） ----------
-// 對話只活在視窗開著的期間，關掉就清空（不進資料庫，也不佔 Supabase 額度）。
-let aiChat = { history: [], busy: false };
+// 對話機制（代號、預覽卡、套用順序）都在 js/aichat.js，這裡只描述「行程」這個 adapter。
 
 // 範例要跟著編輯範圍走。預設範圍是「正在看的那一天」，這時擺「幫我排第三天」當範例，
-// 使用者照抄會被模型婉拒（validateOps 也會把日期綁回當天），第一次用的人只會覺得壞了。
+// 使用者照抄會被模型婉拒（validateItinOps 也會把日期綁回當天），第一次用的人只會覺得壞了。
 const AI_EXAMPLES_DAY = [
   "這天太趕了，午餐後多留一小時",
   "把下午的購物行程刪掉",
@@ -717,8 +835,7 @@ const AI_EXAMPLES_TRIP = [
 ];
 
 // 招呼語＝說清楚現在動得到哪幾天 ＋ 對應範圍的範例
-function aiGreetingHtml() {
-  const scope = $("#aiItinDay").value;
+function itinGreeting(scope) {
   const eg = scope ? AI_EXAMPLES_DAY : AI_EXAMPLES_TRIP;
   const where = scope
     ? `現在只會動到 <b>${escapeHtml(dayLabel(scope))}</b> 這天；要改其他天，把上面的範圍換成「整趟」。`
@@ -726,112 +843,6 @@ function aiGreetingHtml() {
   return `<div class="ai-msg ai-msg--ai">用說的就能排行程、改行程 —— 改時間、刪項目、加景點都可以。<br>${where}
        <div class="ai-msg-eg"><b>例如：</b>${eg.map((e) => `「${escapeHtml(e)}」`).join("<br>")}</div>
      </div>`;
-}
-
-// 對話一開始就不要再動招呼語，免得把使用者講過的話洗掉
-const aiChatUntouched = () => !$("#aiChatLog").querySelector(".ai-msg--user, .ai-ops");
-
-function openAiAssistant() {
-  if (!guardEdit()) return;
-  aiChat = { history: [], busy: false };
-  $("#aiChatInput").value = "";
-  $("#aiChatSend").disabled = false;
-  // 編輯範圍：整趟 + 每一天。預設帶入目前正在看的那一天，避免一次動到整趟。
-  const days = tripDayRange();
-  const sel = $("#aiItinDay");
-  sel.innerHTML = `<option value="">整趟（所有日期）</option>` +
-    days.map((d) => `<option value="${d}">${dayLabel(d)}</option>`).join("");
-  sel.value = (state.activeDay && days.includes(state.activeDay)) ? state.activeDay : "";
-  $("#aiChatLog").innerHTML = aiGreetingHtml();
-  $("#aiItinModal").hidden = false;
-  // 手機上自動 focus 會直接彈鍵盤把對話擠掉，只在桌機做
-  if (window.innerWidth > 520) $("#aiChatInput").focus();
-}
-
-function closeAiAssistant() {
-  $("#aiItinModal").hidden = true;
-  $("#aiChatLog").innerHTML = "";
-  aiChat = { history: [], busy: false };
-}
-
-// 對話泡泡。一律 textContent，不碰 innerHTML。
-function aiChatPush(role, text, ok = true) {
-  const log = $("#aiChatLog");
-  const el = document.createElement("div");
-  el.className = `ai-msg ai-msg--${role === "user" ? "user" : "ai"}`;
-  if (!ok) el.dataset.ok = "false";
-  el.textContent = text;
-  log.appendChild(el);
-  log.scrollTop = log.scrollHeight;
-  return el;
-}
-
-async function onAiChatSend() {
-  if (aiChat.busy || !guardEdit()) return;
-  const input = $("#aiChatInput");
-  const message = input.value.trim();
-  if (!message) return;
-  input.value = "";
-  aiChatPush("user", message);
-
-  aiChat.busy = true;
-  const sendBtn = $("#aiChatSend");
-  sendBtn.disabled = true;
-  const bubble = aiChatPush("ai", "思考中…");
-  // 開關視窗會換掉整個 aiChat 物件。抓著這一輪的參照，回應太慢時才不會把
-  // 上一場對話的結果貼進新的對話裡。
-  const session = aiChat;
-  try {
-    const scope = $("#aiItinDay").value;   // 空 = 整趟
-    // 每輪都重抓最新快照：多人即時同步下，畫面上的資料可能已經過期
-    const all = await listItems(state.trip.id);
-    const scoped = scope ? all.filter((i) => i.day_date === scope) : all;
-
-    // 只把短代號交給模型，UUID 留在前端。模型指錯代號時對照不到 → 那條 op 直接丟掉。
-    const refMap = new Map();
-    const items = scoped.map((it, idx) => {
-      const ref = `#${idx + 1}`;
-      refMap.set(ref, it);
-      return {
-        ref,
-        day_date: it.day_date || "",
-        start_time: (it.start_time || "").slice(0, 5),
-        end_time: (it.end_time || "").slice(0, 5),
-        title: it.title,
-        category: it.category || "",
-        location_name: it.location_name || "",
-        note: it.notes || "",
-      };
-    });
-
-    let days = tripDayRange();
-    if (!days.length) days = [...new Set(all.map((i) => i.day_date).filter(Boolean))];
-    if (scope) days = [scope];
-
-    const { reply, ops: raw } = await callAI("edit_itinerary", {
-      trip: { title: state.trip.title, start: state.trip.start_date, end: state.trip.end_date },
-      scope, days, items,
-      history: aiChat.history.slice(-6),   // 只帶文字，讓「再早一點」這種指代接得上
-      message,
-    });
-
-    if (aiChat !== session) return;   // 這場對話已經被關掉了，結果直接丟棄
-    const ops = validateOps(raw, refMap, scope, days);
-    bubble.textContent = reply
-      || (ops.length ? "我調整了以下項目：" : "我不太確定你想怎麼改，可以再說得具體一點嗎？");
-    if (ops.length) renderOpsCard(ops);
-    session.history.push({ role: "user", text: message }, { role: "ai", text: reply || "" });
-  } catch (e) {
-    if (aiChat !== session) return;
-    bubble.textContent = humanError(e);
-    bubble.dataset.ok = "false";
-  } finally {
-    session.busy = false;
-    if (aiChat === session) {
-      sendBtn.disabled = false;
-      $("#aiChatLog").scrollTop = $("#aiChatLog").scrollHeight;
-    }
-  }
 }
 
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -850,7 +861,7 @@ function curOf(item, k) {
 
 // 前端最後一道防線。模型可能指到不存在的代號、跑到範圍外的日期、給壞掉的時間，
 // 一律在這裡丟掉 —— 寧可少做一項，也不要改錯別人的資料。
-function validateOps(raw, refMap, scope, days) {
+function validateItinOps(raw, refMap, scope, days) {
   const okDay = (d) => (scope ? d === scope : days.includes(d));
   const out = [];
   for (const o of Array.isArray(raw) ? raw : []) {
@@ -914,49 +925,6 @@ function opWhen(o) {
   return [d, t].filter(Boolean).join(" ") || "未排定";
 }
 
-// 變更預覽卡：每列一條變更，預設全勾，按了「套用」才真的寫進資料庫。
-function renderOpsCard(ops) {
-  const log = $("#aiChatLog");
-  const card = document.createElement("div");
-  card.className = "ai-ops";
-  card.innerHTML = ops.map((o, idx) => {
-    let kind, txt;
-    if (o.op === "delete") {
-      kind = "delete";
-      txt = `🗑️ ${escapeHtml(o.item.title)}<small>${escapeHtml(opWhen(o.item))} · 刪除</small>`;
-    } else if (o.op === "update") {
-      kind = "update";
-      const diffs = Object.entries(o.fields)
-        .map(([k, v]) => `${OP_FIELD_LABEL[k] || k}：${escapeHtml(curOf(o.item, k) || "（空）")} → ${escapeHtml(v || "（空）")}`)
-        .join("　");
-      txt = `✏️ ${escapeHtml(o.item.title)}<small>${diffs}</small>`;
-    } else {
-      kind = "create";
-      const f = o.fields;
-      const meta = [opWhen(f), f.category, f.location_name].filter(Boolean).join(" · ");
-      txt = `➕ ${escapeHtml(f.title)}<small>${escapeHtml(meta)} · 新增</small>`;
-    }
-    return `<label class="ai-op" data-kind="${kind}">
-        <input type="checkbox" data-op="${idx}" checked />
-        <span class="ai-op-txt">${txt}</span>
-      </label>`;
-  }).join("") +
-    `<div class="ai-ops-foot"><button class="btn btn--sm" type="button" data-apply></button></div>`;
-  log.appendChild(card);
-
-  const applyBtn = card.querySelector("[data-apply]");
-  const boxes = [...card.querySelectorAll("[data-op]")];
-  const sync = () => {
-    const n = boxes.filter((b) => b.checked).length;
-    applyBtn.textContent = n ? `套用勾選的 ${n} 項` : "沒有勾選任何變更";
-    applyBtn.disabled = !n;
-  };
-  boxes.forEach((b) => (b.onchange = sync));
-  sync();
-  applyBtn.onclick = () => applyOps(ops.filter((_, i) => boxes[i].checked), card, applyBtn);
-  log.scrollTop = log.scrollHeight;
-}
-
 // AI 欄位 → 資料庫欄位。空字串轉 null：date/time 欄位吃不下空字串。
 function updatePatch(o) {
   const patch = {};
@@ -985,29 +953,77 @@ function createPayload(f) {
   };
 }
 
-// 依 刪除 → 修改 → 新增 的順序套用；單筆失敗不中斷其餘。
-async function applyOps(ops, card, btn) {
-  if (!ops.length || !guardEdit()) return;
-  btn.disabled = true;
-  btn.textContent = "套用中…";
-  const order = { delete: 0, update: 1, create: 2 };
-  let ok = 0, fail = 0;
-  for (const o of [...ops].sort((a, b) => order[a.op] - order[b.op])) {
-    try {
-      if (o.op === "delete") await deleteItem(o.item.id);
-      else if (o.op === "update") await updateItem(o.item.id, updatePatch(o));
-      else await addItem(state.trip.id, createPayload(o.fields), state.me?.id);
-      ok++;
-    } catch { fail++; }
-  }
-  // 套用過就鎖住整張卡，避免同一份變更被按第二次
-  card.dataset.done = "true";
-  card.querySelectorAll("input, button").forEach((el) => (el.disabled = true));
-  btn.textContent = fail ? `已套用 ${ok} 項（${fail} 項失敗）` : `已套用 ${ok} 項`;
-  await renderItinerary(state.trip).catch(() => {});
-  renderDashboard().catch(() => {});
-  toast(fail ? `已套用 ${ok} 項，${fail} 項失敗` : `已套用 ${ok} 項變更`, !fail);
-}
+const ITIN_CHAT = {
+  title: "✨ AI 助手",
+  hint: "AI 提出的變更會先列成清單，你確認後才會寫入行程。",
+  mode: "edit_itinerary",
+  guard: guardEdit,
+  greeting: itinGreeting,
+  // 編輯範圍：整趟 + 每一天。預設帶入目前正在看的那一天，避免一次動到整趟。
+  scope: {
+    options: () => [
+      { value: "", label: "整趟（所有日期）" },
+      ...tripDayRange().map((d) => ({ value: d, label: dayLabel(d) })),
+    ],
+    initial: () => (state.activeDay && tripDayRange().includes(state.activeDay) ? state.activeDay : ""),
+  },
+  load: async (scope) => {
+    // 每輪都重抓最新快照：多人即時同步下，畫面上的資料可能已經過期
+    const all = await listItems(state.trip.id);
+    const scoped = scope ? all.filter((i) => i.day_date === scope) : all;
+
+    // 只把短代號交給模型，UUID 留在前端。模型指錯代號時對照不到 → 那條 op 直接丟掉。
+    const refMap = new Map();
+    const items = scoped.map((it, idx) => {
+      const ref = `#${idx + 1}`;
+      refMap.set(ref, it);
+      return {
+        ref,
+        day_date: it.day_date || "",
+        start_time: (it.start_time || "").slice(0, 5),
+        end_time: (it.end_time || "").slice(0, 5),
+        title: it.title,
+        category: it.category || "",
+        location_name: it.location_name || "",
+        note: it.notes || "",
+      };
+    });
+
+    let days = tripDayRange();
+    if (!days.length) days = [...new Set(all.map((i) => i.day_date).filter(Boolean))];
+    if (scope) days = [scope];
+    return { refMap, items, days };
+  },
+  payload: (ctx, scope) => ({
+    trip: { title: state.trip.title, start: state.trip.start_date, end: state.trip.end_date },
+    scope, days: ctx.days, items: ctx.items,
+  }),
+  validate: (raw, ctx, scope) => validateItinOps(raw, ctx.refMap, scope, ctx.days),
+  label: (o) => (o.op === "create" ? o.fields.title : o.item.title),
+  describe: (o) => {
+    if (o.op === "delete") {
+      return { kind: "delete", html: `🗑️ ${escapeHtml(o.item.title)}<small>${escapeHtml(opWhen(o.item))} · 刪除</small>` };
+    }
+    if (o.op === "update") {
+      const diffs = Object.entries(o.fields)
+        .map(([k, v]) => `${OP_FIELD_LABEL[k] || k}：${escapeHtml(curOf(o.item, k) || "（空）")} → ${escapeHtml(v || "（空）")}`)
+        .join("　");
+      return { kind: "update", html: `✏️ ${escapeHtml(o.item.title)}<small>${diffs}</small>` };
+    }
+    const f = o.fields;
+    const meta = [opWhen(f), f.category, f.location_name].filter(Boolean).join(" · ");
+    return { kind: "create", html: `➕ ${escapeHtml(f.title)}<small>${escapeHtml(meta)} · 新增</small>` };
+  },
+  apply: async (o) => {
+    if (o.op === "delete") return deleteItem(o.item.id);
+    if (o.op === "update") return updateItem(o.item.id, updatePatch(o));
+    return addItem(state.trip.id, createPayload(o.fields), state.me?.id);
+  },
+  after: async () => {
+    await renderItinerary(state.trip).catch(() => {});
+    renderDashboard().catch(() => {});
+  },
+};
 
 function tripDayRange() {
   const t = state.trip;
@@ -1018,45 +1034,246 @@ function tripDayRange() {
   while (d <= end) { out.push(ymd(d)); d.setDate(d.getDate() + 1); }
   return out;
 }
-// ---------- 記帳語意輸入 ----------
-async function onNlExpense() {
-  if (!guardEdit()) return;
-  const text = $("#nlExpenseInput").value.trim();
-  if (!text) return;
-  const btn = $("#nlExpenseBtn"); const old = btn.textContent;
-  btn.disabled = true; btn.textContent = "解析中…";
-  try {
-    const { parsed } = await callAI("parse_expense", {
-      text,
-      members: state.members.map((m) => ({ id: m.id, name: m.display_name })),
-      currencies: state.currencies, base: state.trip.base_currency,
-    });
-    const byName = (n) => {
-      if (!n) return null;
-      if (/^(我|自己|me)$/i.test(String(n).trim())) return state.me;
-      return state.members.find((m) => m.display_name === n
-        || m.display_name.toLowerCase() === String(n).toLowerCase());
-    };
-    openExpenseModal(null);
-    const f = $("#expenseForm");
-    if (parsed.description) f.description.value = parsed.description;
-    if (parsed.amount != null) f.amount.value = parsed.amount;
-    if (parsed.currency && state.currencies.includes(parsed.currency)) $("#expenseCurrency").value = parsed.currency;
-    if (parsed.category) f.category.value = parsed.category;
-    const payer = byName(parsed.paid_by);
-    if (payer) $("#expensePayer").value = payer.id;
-    if (Array.isArray(parsed.splits) && parsed.splits.length) {
-      const ids = parsed.splits.map(byName).filter(Boolean).map((m) => m.id);
-      if (ids.length) { state.splitSel = new Set(ids); renderSplitChips(); }
-    }
-    updateSplitHint();
-    $("#nlExpenseInput").value = "";
-  } catch (e) {
-    toast("AI 解析失敗：" + humanError(e), false);
-  } finally {
-    btn.disabled = false; btn.textContent = old;
-  }
+// ---------- AI 記帳助理（對話式）----------
+// 一樣走 js/aichat.js 的外殼。與行程最大的差別：**匯率與每人分攤金額一律前端算**，
+// 模型只負責「誰付的、多少錢、誰分」，數字換算交給 fx.js / settle.js。
+
+const EXP_CATEGORIES = ["餐飲", "交通", "住宿", "購物", "門票", "其他"];
+const EXP_SNAPSHOT_MAX = 50;   // 帳目多起來會把 prompt 撐爆，只給模型看最近這些筆
+const YMD = /^\d{4}-\d{2}-\d{2}$/;
+
+// AI 只講名字，這裡負責對回成員。對不到就回 null，寧可少填一個欄位也不要記到別人頭上。
+function memberByName(n) {
+  const v = String(n ?? "").trim();
+  if (!v) return null;
+  if (/^(我|自己|me)$/i.test(v)) return state.me;
+  return state.members.find((m) => m.display_name === v
+    || (m.display_name || "").toLowerCase() === v.toLowerCase()) || null;
 }
+
+const expDesc = (e) => e.description || e.category || "支出";
+const expDate = (e) => (e.spent_at ? String(e.spent_at).slice(0, 10) : "");
+
+const AI_EXAMPLES_EXPENSE = [
+  "早餐 850 我付，大家均分",
+  "昨天的計程車改成 1200",
+  "刪掉重複的那筆門票",
+];
+
+function expenseGreeting() {
+  return `<div class="ai-msg ai-msg--ai">用說的就能記帳 —— 新增、改金額、刪掉都可以，一句話裡有好幾筆也行。<br>
+       匯率與每人分多少由系統換算，你只要講「誰付的、多少錢、誰分」。
+       <div class="ai-msg-eg"><b>例如：</b>${AI_EXAMPLES_EXPENSE.map((e) => `「${escapeHtml(e)}」`).join("<br>")}</div>
+     </div>`;
+}
+
+// 名字陣列 → 成員 id 陣列；空的（或全對不到）代表全員均分
+function splitIdsFrom(names) {
+  const ids = (Array.isArray(names) ? names : []).map(memberByName).filter(Boolean).map((m) => m.id);
+  return ids.length ? [...new Set(ids)] : state.members.map((m) => m.id);
+}
+
+function validateExpenseOps(raw, refMap) {
+  // 幣別還沒載進來時至少要放行基準幣別，否則整批 create 會全被擋掉
+  const curOk = (c) => (state.currencies.length ? state.currencies : [state.trip.base_currency]).includes(c);
+  const out = [];
+  for (const o of Array.isArray(raw) ? raw : []) {
+    if (!o || typeof o !== "object") continue;
+    const item = refMap.get(String(o.ref ?? "").trim());
+
+    if (o.op === "delete") {
+      if (item) out.push({ op: "delete", item });
+      continue;
+    }
+
+    const src = (o.item && typeof o.item === "object") ? o.item : (o.fields || {});
+    const f = {};
+    if ("description" in src) {
+      const v = String(src.description ?? "").trim();
+      if (v) f.description = v;
+    }
+    if ("amount" in src) {
+      const v = Number(src.amount);
+      if (Number.isFinite(v) && v > 0) f.amount = v;
+    }
+    if ("currency" in src) {
+      const v = String(src.currency ?? "").trim().toUpperCase();
+      if (curOk(v)) f.currency = v;
+    }
+    if ("category" in src) {
+      const v = String(src.category ?? "").trim();
+      if (EXP_CATEGORIES.includes(v)) f.category = v;
+    }
+    if ("spent_at" in src) {
+      const v = String(src.spent_at ?? "").trim();
+      if (YMD.test(v)) f.spent_at = v;
+    }
+    if ("paid_by" in src) {
+      const m = memberByName(src.paid_by);
+      if (m) f.paid_by = m.id;
+    }
+    if ("splits" in src) {
+      const ids = (Array.isArray(src.splits) ? src.splits : []).map(memberByName).filter(Boolean).map((m) => m.id);
+      if (ids.length) f.split_ids = [...new Set(ids)];
+    }
+
+    if (o.op === "update") {
+      if (!item) continue;
+      // 沒真的變就不列進預覽
+      if (f.description === expDesc(item)) delete f.description;
+      if (f.amount === Number(item.amount)) delete f.amount;
+      if (f.currency === item.currency) delete f.currency;
+      if (f.category === (item.category || "")) delete f.category;
+      if (f.spent_at === expDate(item)) delete f.spent_at;
+      if (f.paid_by === item.paid_by) delete f.paid_by;
+      if (f.split_ids) {
+        const now = new Set((item.expense_splits || []).map((s) => s.member_id));
+        if (f.split_ids.length === now.size && f.split_ids.every((id) => now.has(id))) delete f.split_ids;
+      }
+      if (Object.keys(f).length) out.push({ op: "update", item, fields: f });
+      continue;
+    }
+
+    if (o.op === "create") {
+      if (!(f.amount > 0)) continue;                       // 沒金額的支出沒有意義
+      f.description = f.description || f.category || "支出";
+      f.currency = f.currency || state.trip.base_currency;
+      f.category = f.category || "其他";
+      f.spent_at = f.spent_at || todayStr();
+      f.paid_by = f.paid_by || state.me?.id || null;
+      f.split_ids = f.split_ids || state.members.map((m) => m.id);
+      out.push({ op: "create", fields: f });
+    }
+  }
+  return out;
+}
+
+// 匯率永遠現算，不吃模型給的值
+async function rateFor(currency) {
+  const base = state.trip.base_currency;
+  if (currency === base) return 1;
+  try {
+    const rates = await getRates(base);
+    return rateToBase(currency, rates, base) ?? 1;
+  } catch { return 1; }
+}
+
+async function applyExpenseOp(o) {
+  if (o.op === "delete") return deleteExpense(o.item.id);
+
+  const cur = o.item || {};
+  const f = o.fields;
+  const amount = "amount" in f ? f.amount : Number(cur.amount);
+  const currency = f.currency || cur.currency || state.trip.base_currency;
+  // 分帳金額永遠重算：改了金額或幣別，舊的每人份額就不對了
+  const existing = (cur.expense_splits || []).map((s) => s.member_id);
+  const memberIds = f.split_ids
+    || (existing.length ? existing : state.members.map((m) => m.id));
+  const splits = splitEqually(amount, memberIds, ZERO_DECIMAL.has(currency));
+  const spent = "spent_at" in f ? f.spent_at : expDate(cur);
+  const payload = {
+    paid_by: "paid_by" in f ? f.paid_by : (cur.paid_by || null),
+    amount, currency,
+    rate_to_base: await rateFor(currency),
+    category: f.category || cur.category || "其他",
+    description: "description" in f ? f.description : (cur.description || null),
+    spent_at: spent ? new Date(spent).toISOString() : new Date().toISOString(),
+  };
+  if (o.op === "update") return updateExpense(cur.id, payload, splits);
+  return addExpense(state.trip.id, payload, splits);
+}
+
+const EXP_FIELD_LABEL = {
+  description: "說明", amount: "金額", currency: "幣別",
+  category: "分類", spent_at: "日期", paid_by: "付款人", split_ids: "分帳",
+};
+const nameOfMember = (id) => state.members.find((m) => m.id === id)?.display_name || "?";
+function expFieldText(k, v, item, fields = {}) {
+  if (k === "paid_by") return nameOfMember(v);
+  if (k === "split_ids") return v.map(nameOfMember).join("、");
+  // 金額要用「改完之後」的幣別顯示，不然同時改幣別時預覽會標錯貨幣
+  if (k === "amount") return fmtMoney(v, fields.currency || item?.currency || state.trip.base_currency);
+  return String(v);
+}
+function expCurText(k, item) {
+  if (k === "paid_by") return item.paid_by ? nameOfMember(item.paid_by) : "未指定";
+  if (k === "split_ids") return (item.expense_splits || []).map((s) => nameOfMember(s.member_id)).join("、") || "未分帳";
+  if (k === "amount") return fmtMoney(item.amount, item.currency);
+  if (k === "spent_at") return expDate(item) || "（空）";
+  if (k === "description") return expDesc(item);
+  return String(item[k] ?? "") || "（空）";
+}
+
+const EXPENSE_CHAT = {
+  title: "✨ AI 記帳",
+  hint: "AI 提出的變更會先列成清單，你確認後才會寫入帳目。",
+  placeholder: "說說要記什麼帳…（Enter 送出、Shift+Enter 換行）",
+  mode: "edit_expenses",
+  guard: guardEdit,
+  greeting: expenseGreeting,
+  scope: null,   // 記帳沒有分頁範圍，一律看整趟
+  load: async () => {
+    const all = await listExpenses(state.trip.id);       // 已依 spent_at 由新到舊
+    const scoped = all.slice(0, EXP_SNAPSHOT_MAX);
+    const refMap = new Map();
+    const memberById = new Map(state.members.map((m) => [m.id, m]));
+    const items = scoped.map((e, idx) => {
+      const ref = `#${idx + 1}`;
+      refMap.set(ref, e);
+      return {
+        ref,
+        date: expDate(e),
+        description: e.description || "",
+        amount: Number(e.amount),
+        currency: e.currency,
+        category: e.category || "",
+        payer: memberById.get(e.paid_by)?.display_name || "",
+        splits: (e.expense_splits || []).map((s) => memberById.get(s.member_id)?.display_name).filter(Boolean),
+      };
+    });
+    return { refMap, items, truncated: all.length > scoped.length };
+  },
+  payload: (ctx) => ({
+    trip: { title: state.trip.title, start: state.trip.start_date, end: state.trip.end_date },
+    items: ctx.items,
+    truncated: ctx.truncated,
+    members: state.members.map((m) => m.display_name),
+    me: state.me?.display_name || "",
+    currencies: state.currencies.length ? state.currencies : [state.trip.base_currency],
+    base: state.trip.base_currency,
+    today: todayStr(),
+  }),
+  validate: (raw, ctx) => validateExpenseOps(raw, ctx.refMap),
+  label: (o) => (o.op === "create" ? o.fields.description : expDesc(o.item)),
+  describe: (o) => {
+    if (o.op === "delete") {
+      return {
+        kind: "delete",
+        html: `🗑️ ${escapeHtml(expDesc(o.item))}<small>${escapeHtml(fmtMoney(o.item.amount, o.item.currency) + " · " + (expDate(o.item) || "無日期"))} · 刪除</small>`,
+      };
+    }
+    if (o.op === "update") {
+      const diffs = Object.entries(o.fields)
+        .map(([k, v]) => `${EXP_FIELD_LABEL[k] || k}：${escapeHtml(expCurText(k, o.item))} → ${escapeHtml(expFieldText(k, v, o.item, o.fields))}`)
+        .join("　");
+      return { kind: "update", html: `✏️ ${escapeHtml(expDesc(o.item))}<small>${diffs}</small>` };
+    }
+    const f = o.fields;
+    const meta = [
+      fmtMoney(f.amount, f.currency) + " " + f.currency,
+      f.category,
+      f.spent_at,
+      (f.paid_by ? nameOfMember(f.paid_by) + " 付" : ""),
+      `分 ${f.split_ids.length} 人`,
+    ].filter(Boolean).join(" · ");
+    return { kind: "create", html: `➕ ${escapeHtml(f.description)}<small>${escapeHtml(meta)} · 新增</small>` };
+  },
+  apply: applyExpenseOp,
+  after: async () => {
+    await renderExpenses(state.trip).catch(() => {});
+    renderDashboard().catch(() => {});
+  },
+};
 
 function renderBaseSelect(trip) {
   const sel = $("#baseSelect");
@@ -1674,7 +1891,7 @@ async function renderPacking(trip) {
   const done = items.filter((i) => i.checked).length;
   setText("#packingProgress", total ? `（已打包 ${done}/${total}）` : "");
   if (!items.length) {
-    list.innerHTML = `<p class="status">還沒有任何物品，點「＋ 新增物品」或用「✨ AI 建議」開始整理行李。</p>`;
+    list.innerHTML = `<p class="status">還沒有任何物品，點「＋ 新增物品」，或用「✨ AI 助手」說一句「幫我列這趟要帶什麼」。</p>`;
     return;
   }
   // 分組：共用(member_id=null) 優先，其餘依成員順序
@@ -1798,117 +2015,231 @@ async function onPackingDelete() {
   catch (e) { toast(humanError(e), false); }
 }
 
-// ---------- AI 建議行李 ----------
-function openAiPacking() {
-  if (!guardEdit()) return;
-  $("#aiPackingOut").innerHTML = "";
-  $("#aiPackingPrefs").value = "";
-  fillPackingMemberSelect($("#aiPackingMember"), "");
-  $("#aiPackingModal").hidden = false;
-}
+// ---------- AI 行李管家（對話式）----------
+// 範圍下拉在這裡是「歸屬」（全部／共用／某成員），對應行程 AI 的「哪一天」。
+// 除了 #n 代號那一套，還會把天氣摘要與行程活動當情境餵給模型 —— 這是舊版一鍵建議最有價值的部分。
 
-async function onAiPackingGo() {
-  const out = $("#aiPackingOut");
-  out.innerHTML = `<p class="status">AI 思考中…（依天氣與行程）</p>`;
+const PACK_CATEGORIES = ["衣物", "證件", "電子", "盥洗", "藥品", "其他"];
+const SHARED = "shared";       // 範圍下拉裡「共用 / 全體」的值（member_id 為 null）
+const SHARED_LABEL = "共用 / 全體";
+
+// 這趟的天氣與行程只在第一輪抓，之後沿用（天氣要打外部 API，每輪重抓太慢）
+let packCtxCache = null;
+async function packingContext() {
+  if (packCtxCache) return packCtxCache;
+  let days = [];
+  let itinerary = [];
   try {
-    let days = getWeatherSummaries();
+    days = getWeatherSummaries();
     if (!days.length) { await ensureWeather(true); days = getWeatherSummaries(); }
-    const items = await listItems(state.trip.id);
-    const forId = $("#aiPackingMember").value || "";
-    const forName = forId ? (state.members.find((m) => m.id === forId)?.display_name || "") : "";
-    const { items: raw } = await callAI("suggest_packing", {
-      trip: { title: state.trip.title, start: state.trip.start_date, end: state.trip.end_date },
-      days,
-      itinerary: items.map((i) => i.title).filter(Boolean),
-      preferences: $("#aiPackingPrefs").value.trim(),
-      for_member: forName,
+  } catch { days = []; }        // 天氣掛掉不該擋住整個對話
+  try {
+    itinerary = (await listItems(state.trip.id)).map((i) => i.title).filter(Boolean);
+  } catch { itinerary = []; }
+  packCtxCache = { days, itinerary };
+  return packCtxCache;
+}
+
+const AI_EXAMPLES_PACK = [
+  "幫我列這趟要帶什麼",
+  "雨具改成 2 支",
+  "把充電器指派給小明",
+];
+
+function packingGreeting(scope) {
+  const where = scope
+    ? `現在只會動到 <b>${escapeHtml(packScopeLabel(scope))}</b> 的物品；要動其他人的，把上面的範圍換成「全部」。`
+    : `現在的範圍是<b>全部</b>，可以直接說要給誰。`;
+  return `<div class="ai-msg ai-msg--ai">用說的就能整理行李 —— 列清單、改數量、換歸屬、刪掉都可以。<br>${where}
+       <div class="ai-msg-eg"><b>例如：</b>${AI_EXAMPLES_PACK.map((e) => `「${escapeHtml(e)}」`).join("<br>")}</div>
+     </div>`;
+}
+
+function packScopeLabel(scope) {
+  if (!scope) return "";
+  if (scope === SHARED) return SHARED_LABEL;
+  return state.members.find((m) => m.id === scope)?.display_name || "";
+}
+
+// 範圍值 → member_id（null = 共用）
+const scopeMemberId = (scope) => (scope === SHARED ? null : scope || null);
+
+// AI 只講名字。「共用/全體/大家」歸到 null，其餘對成員；對不到回 undefined 代表「別動這個欄位」
+function packOwnerId(name) {
+  const v = String(name ?? "").trim();
+  if (!v) return undefined;
+  if (/^(共用|全體|大家|共同|全部人|shared)$/i.test(v)) return null;
+  const m = memberByName(v);
+  return m ? m.id : undefined;
+}
+
+const packOwnerLabel = (memberId) =>
+  (memberId ? (state.members.find((m) => m.id === memberId)?.display_name || "（已移除成員）") : SHARED_LABEL);
+
+function validatePackingOps(raw, refMap, scope) {
+  const out = [];
+  for (const o of Array.isArray(raw) ? raw : []) {
+    if (!o || typeof o !== "object") continue;
+    const item = refMap.get(String(o.ref ?? "").trim());
+
+    if (o.op === "delete") {
+      if (item) out.push({ op: "delete", item });
+      continue;
+    }
+
+    const src = (o.item && typeof o.item === "object") ? o.item : (o.fields || {});
+    const f = {};
+    if ("name" in src) {
+      const v = String(src.name ?? "").trim();
+      if (v) f.name = v;                       // 不准把名稱清空
+    }
+    if ("category" in src) {
+      const v = String(src.category ?? "").trim();
+      if (PACK_CATEGORIES.includes(v)) f.category = v;
+    }
+    if ("qty" in src) {
+      const v = parseInt(src.qty, 10);
+      if (Number.isFinite(v) && v >= 1) f.qty = v;
+    }
+    if ("note" in src) f.note = String(src.note ?? "").trim();
+    if ("checked" in src && typeof src.checked === "boolean") f.checked = src.checked;
+    if ("member" in src) {
+      const id = packOwnerId(src.member);
+      if (id !== undefined) f.member_id = id;
+    }
+    // 範圍鎖在某個歸屬時，一律綁回去（模型講錯人也改不到別人的東西）
+    if (scope) f.member_id = scopeMemberId(scope);
+
+    if (o.op === "update") {
+      if (!item) continue;
+      if (f.name === item.name) delete f.name;
+      if (f.category === (item.category || "")) delete f.category;
+      if (f.qty === item.qty) delete f.qty;
+      if (f.note === (item.note || "")) delete f.note;
+      if (f.checked === item.checked) delete f.checked;
+      if ("member_id" in f && f.member_id === (item.member_id || null)) delete f.member_id;
+      if (Object.keys(f).length) out.push({ op: "update", item, fields: f });
+      continue;
+    }
+
+    if (o.op === "create") {
+      if (!f.name) continue;
+      out.push({
+        op: "create",
+        fields: {
+          name: f.name,
+          category: f.category || "其他",
+          qty: f.qty || 1,
+          note: f.note || "",
+          member_id: "member_id" in f ? f.member_id : null,
+        },
+      });
+    }
+  }
+  return out;
+}
+
+const PACK_FIELD_LABEL = {
+  name: "名稱", category: "分類", qty: "數量", note: "備註", member_id: "歸屬", checked: "狀態",
+};
+const packedText = (v) => (v ? "已打包" : "未打包");
+function packFieldText(k, v) {
+  if (k === "member_id") return packOwnerLabel(v);
+  if (k === "checked") return packedText(v);
+  return String(v) || "（空）";
+}
+function packCurText(k, item) {
+  if (k === "member_id") return packOwnerLabel(item.member_id);
+  if (k === "checked") return packedText(item.checked);
+  return String(item[k] ?? "") || "（空）";
+}
+
+const PACKING_CHAT = {
+  title: "✨ AI 行李管家",
+  hint: "AI 提出的變更會先列成清單，你確認後才會寫入行李。",
+  placeholder: "說說行李要怎麼整理…（Enter 送出、Shift+Enter 換行）",
+  mode: "edit_packing",
+  guard: guardEdit,
+  greeting: packingGreeting,
+  scope: {
+    options: () => [
+      { value: "", label: "全部" },
+      { value: SHARED, label: `🧳 ${SHARED_LABEL}` },
+      ...state.members.map((m) => ({ value: m.id, label: m.display_name })),
+    ],
+    initial: () => "",
+  },
+  load: async (scope) => {
+    const all = await listPacking(state.trip.id);
+    const scoped = scope ? all.filter((i) => (i.member_id || null) === scopeMemberId(scope)) : all;
+    const refMap = new Map();
+    const items = scoped.map((it, idx) => {
+      const ref = `#${idx + 1}`;
+      refMap.set(ref, it);
+      return {
+        ref,
+        name: it.name,
+        category: it.category || "",
+        qty: it.qty,
+        checked: !!it.checked,
+        owner: packOwnerLabel(it.member_id),
+        note: it.note || "",
+      };
     });
-    const sug = (Array.isArray(raw) ? raw : []).filter((s) => s && s.name);
-    if (!sug.length) { out.innerHTML = `<p class="status">沒有建議，換個偏好再試。</p>`; return; }
-    out.innerHTML = `
-      <div class="ai-itin-bar">
-        <span class="status">AI 建議 ${sug.length} 項${forName ? "（給 " + escapeHtml(forName) + "）" : "（共用）"}</span>
-        <button class="btn btn--sm" type="button" id="aiPackAddAll">全部加入</button>
-      </div>
-      ${sug.map((s, idx) => `
-      <div class="pack-row">
-        <div class="pack-body">
-          <div class="pack-name">${PACK_ICON[s.category] || "•"} ${escapeHtml(s.name)}${s.qty > 1 ? ` <small class="status">×${s.qty}</small>` : ""} ${s.category ? `<span class="tag">${escapeHtml(s.category)}</span>` : ""}</div>
-          ${s.note ? `<div class="itin-notes">${escapeHtml(s.note)}</div>` : ""}
-        </div>
-        <div class="itin-actions"><button class="btn btn--ghost btn--sm" data-pack-add="${idx}">加入</button></div>
-      </div>`).join("")}`;
-    const forIdFinal = forId || null;
-    $("#aiPackAddAll").onclick = () => addAllPacking(sug, forIdFinal, $("#aiPackAddAll"));
-    out.querySelectorAll("[data-pack-add]").forEach((b) => (b.onclick = async () => {
-      try {
-        await addPacking(state.trip.id, sugToPacking(sug[Number(b.dataset.packAdd)], forIdFinal, Number(b.dataset.packAdd)), state.me?.id);
-        b.textContent = "已加入"; b.disabled = true;
-        renderPacking(state.trip).catch(() => {});
-      } catch (e) { toast(humanError(e), false); }
-    }));
-  } catch (e) {
-    out.innerHTML = `<p class="status" data-ok="false">${humanError(e)}</p>`;
-  }
-}
-
-function sugToPacking(s, memberId, idx) {
-  return {
-    name: s.name,
-    category: s.category || null,
-    qty: Math.max(1, parseInt(s.qty, 10) || 1),
-    note: s.note || null,
-    member_id: memberId || null,
-    sort_order: idx,
-  };
-}
-
-async function addAllPacking(sug, memberId, btn) {
-  if (!Array.isArray(sug) || !sug.length) return;
-  const old = btn.textContent; btn.disabled = true; btn.textContent = "加入中…";
-  let ok = 0;
-  for (let i = 0; i < sug.length; i++) {
-    if (!sug[i]?.name) continue;
-    try { await addPacking(state.trip.id, sugToPacking(sug[i], memberId, i), state.me?.id); ok++; }
-    catch { /* 略過單筆失敗 */ }
-  }
-  await renderPacking(state.trip).catch(() => {});
-  $("#aiPackingModal").hidden = true;
-  toast(ok ? `已加入 ${ok} 項行李` : "沒有可加入的項目", !!ok);
-  if (ok) showPage("packing");
-  btn.disabled = false; btn.textContent = old;
-}
+    const { days, itinerary } = await packingContext();
+    return { refMap, items, days, itinerary };
+  },
+  payload: (ctx, scope) => ({
+    trip: { title: state.trip.title, start: state.trip.start_date, end: state.trip.end_date },
+    items: ctx.items,
+    members: state.members.map((m) => m.display_name),
+    scope_label: packScopeLabel(scope),
+    days: ctx.days,
+    itinerary: ctx.itinerary,
+  }),
+  validate: (raw, ctx, scope) => validatePackingOps(raw, ctx.refMap, scope),
+  label: (o) => (o.op === "create" ? o.fields.name : o.item.name),
+  describe: (o) => {
+    if (o.op === "delete") {
+      return {
+        kind: "delete",
+        html: `🗑️ ${escapeHtml(o.item.name)}<small>${escapeHtml(packOwnerLabel(o.item.member_id))} · 刪除</small>`,
+      };
+    }
+    if (o.op === "update") {
+      const diffs = Object.entries(o.fields)
+        .map(([k, v]) => `${PACK_FIELD_LABEL[k] || k}：${escapeHtml(packCurText(k, o.item))} → ${escapeHtml(packFieldText(k, v))}`)
+        .join("　");
+      return { kind: "update", html: `✏️ ${escapeHtml(o.item.name)}<small>${diffs}</small>` };
+    }
+    const f = o.fields;
+    const meta = [packOwnerLabel(f.member_id), f.category, f.qty > 1 ? `×${f.qty}` : "", f.note]
+      .filter(Boolean).join(" · ");
+    return { kind: "create", html: `➕ ${escapeHtml(f.name)}<small>${escapeHtml(meta)} · 新增</small>` };
+  },
+  apply: async (o) => {
+    if (o.op === "delete") return deletePacking(o.item.id);
+    if (o.op === "update") {
+      const patch = { ...o.fields };
+      if ("note" in patch) patch.note = patch.note || null;
+      return updatePacking(o.item.id, patch);
+    }
+    const f = o.fields;
+    return addPacking(state.trip.id, {
+      name: f.name,
+      category: f.category || null,
+      qty: f.qty,
+      note: f.note || null,
+      member_id: f.member_id || null,
+    }, state.me?.id);
+  },
+  after: async () => { await renderPacking(state.trip).catch(() => {}); },
+};
 
 // ---------- 共用 ----------
 function setBusy(form, busy) {
   form.querySelectorAll("button, input, select").forEach((el) => (el.disabled = busy));
 }
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-}
-function escapeAttr(s) { return escapeHtml(s); }
-
-// 底部短暫提示（取代成功/失敗 alert）
-// action = { label, run } 時附一顆按鈕（例：刪除後的「復原」），並把逾時拉長讓人來得及按
-let toastTimer = null;
-function toast(msg, ok = true, action = null) {
-  const el = $("#toast");
-  el.textContent = msg;                 // 純文字，不碰 innerHTML
-  el.dataset.ok = ok ? "true" : "false";
-  if (action) {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "toast-act";
-    b.textContent = action.label;
-    b.onclick = () => { clearTimeout(toastTimer); el.hidden = true; action.run(); };
-    el.appendChild(b);
-  }
-  el.hidden = false;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (el.hidden = true), action ? 5000 : 2600);
-}
-
 // 多選項彈窗 → Promise<選中的 value>；取消或點背景 → null
 // choices: [{ value, label, danger }]，按鈕依序插在「取消」之前
 function choiceDialog({ title = "確認", body = "", choices = [] } = {}) {
@@ -1946,18 +2277,6 @@ function choiceDialog({ title = "確認", body = "", choices = [] } = {}) {
 function confirmDialog({ title = "確認", body = "", danger = false, okText = "確定" } = {}) {
   return choiceDialog({ title, body, choices: [{ value: true, label: okText, danger }] })
     .then((v) => v === true);
-}
-
-function humanError(err) {
-  const m = err?.message || String(err);
-  if (/code taken/i.test(m)) return "這個行程碼已被使用，換一個吧。";
-  if (/invalid code/i.test(m)) return "行程碼只能用英文或數字，長度 3–12 碼。";
-  if (/name required/i.test(m)) return "請輸入你的名字。";
-  if (/not found/i.test(m)) return "找不到這個行程碼，請確認後再試。";
-  if (/not authenticated/i.test(m)) return "身份尚未就緒，請重新整理頁面。";
-  if (/RESOURCE_EXHAUSTED|\b429\b/.test(m)) return "AI 今天的免費額度用完了，請稍後再試。";
-  if (/不是合法 JSON|全部模型失敗/.test(m)) return "AI 服務異常：" + m;
-  return m;
 }
 
 // ---------- 行程中樞（總覽：我的行程 / 建立 / 加入登入 / 刪除） ----------
@@ -2056,23 +2375,23 @@ async function boot() {
   $("#resetPwClose").onclick = $("#resetPwCancel").onclick = () => ($("#resetPwModal").hidden = true);
   $("#resetPwModal").addEventListener("click", (e) => { if (e.target.id === "resetPwModal") $("#resetPwModal").hidden = true; });
 
-  // AI 建議行程
-  $("#aiItinBtn").onclick = openAiAssistant;
-  $("#aiItinClose").onclick = closeAiAssistant;
-  $("#aiChatSend").onclick = onAiChatSend;
-  // 換範圍就換範例：能動的日期變了，招呼語裡的示範也要跟著變
-  $("#aiItinDay").onchange = () => {
-    if (aiChatUntouched()) $("#aiChatLog").innerHTML = aiGreetingHtml();
-  };
-  // Enter 送出、Shift+Enter 換行（比照記帳的語意輸入框）
-  $("#aiChatInput").addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onAiChatSend(); }
-  });
-  $("#aiItinModal").addEventListener("click", (e) => { if (e.target.id === "aiItinModal") closeAiAssistant(); });
+  // 改顯示名稱（管理員改別人）
+  $("#renameForm").addEventListener("submit", onRenameSubmit);
+  $("#renameClose").onclick = $("#renameCancel").onclick = () => ($("#renameModal").hidden = true);
+  $("#renameModal").addEventListener("click", (e) => { if (e.target.id === "renameModal") $("#renameModal").hidden = true; });
 
-  // 記帳語意輸入
-  $("#nlExpenseBtn").onclick = onNlExpense;
-  $("#nlExpenseInput").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); onNlExpense(); } });
+  // 帳號設定（本人）：顯示名稱 / 改密碼
+  $("#drawerProfileBtn").onclick = openProfileModal;
+  $("#profileNameForm").addEventListener("submit", onProfileNameSubmit);
+  $("#profilePwForm").addEventListener("submit", onProfilePwSubmit);
+  $("#profileClose").onclick = () => ($("#profileModal").hidden = true);
+  $("#profileModal").addEventListener("click", (e) => { if (e.target.id === "profileModal") $("#profileModal").hidden = true; });
+
+  // 對話式 AI：三個功能共用同一個視窗，只換 adapter
+  bindAiChat();
+  $("#aiItinBtn").onclick = () => openAiChat(ITIN_CHAT);
+
+  $("#aiExpenseBtn").onclick = () => openAiChat(EXPENSE_CHAT);
 
   // 行李清單
   $("#addPackingBtn").onclick = () => openPackingModal(null);
@@ -2080,11 +2399,7 @@ async function boot() {
   $("#packingForm").addEventListener("submit", onPackingSubmit);
   $("#packingDeleteBtn").onclick = onPackingDelete;
   $("#packingModal").addEventListener("click", (e) => { if (e.target.id === "packingModal") closePackingModal(); });
-  // AI 建議行李
-  $("#aiPackingBtn").onclick = openAiPacking;
-  $("#aiPackingClose").onclick = () => ($("#aiPackingModal").hidden = true);
-  $("#aiPackingGo").onclick = onAiPackingGo;
-  $("#aiPackingModal").addEventListener("click", (e) => { if (e.target.id === "aiPackingModal") $("#aiPackingModal").hidden = true; });
+  $("#aiPackingBtn").onclick = () => openAiChat(PACKING_CHAT);
 
   // 行程項目 modal
   $("#addItemBtn").onclick = () => openItemModal(null);
