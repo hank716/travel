@@ -29,6 +29,7 @@ js/trip.js              行程資料層（建立/加入/成員/幣別/Realtime�
 js/itinerary.js         行程項目資料層（CRUD/Realtime）
 js/app.js               UI 控制器
 supabase/schema.sql     建表 + RLS + RPC（create_trip / join_trip）+ 單一管理員觸發器
+supabase/seed-demo.sql  示範行程 RPC（seed_demo_trip）— 一鍵灌一趟每頁都有資料的假行程
 supabase/reset.sql      清資料重來（A 保留帳號 / B 連帳號清光）
 supabase/functions/ai-assist/     Edge Function（Gemini：天氣 / 排行程 / 記帳語意）
 supabase/functions/admin-users/   Edge Function（service_role：帳號/行程管理後台）
@@ -42,6 +43,12 @@ Supabase Dashboard → **SQL Editor** → 貼上 [`supabase/schema.sql`](./supab
 
 ### 2. 開啟匿名登入
 Dashboard → **Authentication → Providers → Anonymous** → 開啟。
+
+### 2.5 安裝示範行程（選用）
+SQL Editor 再貼一次 [`supabase/seed-demo.sql`](./supabase/seed-demo.sql) → Run（只需一次）。
+之後以管理員登入 → **⚙️ 管理 → 行程管理 → 🎌 示範行程**，就會建立行程碼 `DEMO` 的示範資料：
+5 天 24 個行程項目、14 筆三幣別支出（結算有得算）、17 件行李、4 則備忘與留言、4 位成員（含唯讀）。
+出發日固定是「按下按鈕當天 + 7 天」，所以天氣頁一定拿得到預報。重按一次＝砍掉重建，可當重置鈕。
 
 ### 3. 本機預覽
 ```bash

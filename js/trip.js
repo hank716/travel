@@ -110,6 +110,14 @@ export async function updateTrip(id, patch) {
   if (error) throw error;
 }
 
+// 建立／重建示範行程（管理員專用）。函式定義在 supabase/seed-demo.sql，
+// 同一組行程碼砍掉重建，所以也等於「重置示範資料」。
+export async function seedDemoTrip(code = "DEMO") {
+  const { data, error } = await supabase.rpc("seed_demo_trip", { p_code: code });
+  if (error) throw error;
+  return data; // trips row
+}
+
 // 呼叫 admin-users Edge Function（管理員專用）
 export async function adminAction(action, payload = {}) {
   const { data, error } = await supabase.functions.invoke("admin-users", {

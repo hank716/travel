@@ -33,7 +33,7 @@ import {
   listMembers, getTripCurrencies, addTripCurrency, removeTripCurrency,
   updateBaseCurrency, subscribeTrip, listMyTrips, deleteTrip,
   provisionMember, removeMember, updateTrip, adminAction,
-  setTripAdmin, setMemberCanEdit,
+  setTripAdmin, setMemberCanEdit, seedDemoTrip,
 } from "@/trip.js";
 
 const $ = (s) => document.querySelector(s);
@@ -746,6 +746,28 @@ async function renderAdmin() {
     }));
   } catch (e) {
     uBox.innerHTML = `<p class="status" data-ok="false">${humanError(e)}</p>`;
+  }
+}
+
+// 建立／重建示範行程：一趟每頁都有資料的假行程，用來看功能長什麼樣。
+async function onSeedDemo() {
+  const exists = adminTrips.some((t) => t.code === "DEMO");
+  if (!await confirmDialog({
+    title: "示範行程",
+    body: exists
+      ? "行程碼 DEMO 已經存在，會先刪掉再重建（示範資料會回到初始狀態）。"
+      : "建立一趟資料齊全的示範行程（行程碼 DEMO），行程／記帳／天氣／行李／備忘都會有東西可看。",
+    danger: exists,
+    okText: exists ? "重建" : "建立",
+  })) return;
+  try {
+    const trip = await seedDemoTrip("DEMO");
+    toast("示範行程已建立");
+    await renderAdmin();
+    saveTrip(trip);
+    await enterTrip(trip.id);
+  } catch (e) {
+    toast(humanError(e), false);
   }
 }
 
@@ -2660,6 +2682,7 @@ async function boot() {
   // 管理頁
   $("#adminAddMemberBtn").onclick = onAdminAddMember;
   $("#adminCreateTripBtn").onclick = () => openTripModal();
+  $("#adminSeedDemoBtn").onclick = onSeedDemo;
   $("#tripEditClose").onclick = () => ($("#tripEditModal").hidden = true);
   $("#tripEditForm").addEventListener("submit", onTripEditSubmit);
   $("#tripEditModal").addEventListener("click", (e) => { if (e.target.id === "tripEditModal") $("#tripEditModal").hidden = true; });
