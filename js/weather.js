@@ -1,7 +1,7 @@
 // 天氣：行程地點 →（AI 推斷行政區）→ Open-Meteo 即時預報（超過範圍改去年同期參考）。
 // 解析到的座標寫回 itinerary_items.lat/lng/weather_area 快取，避免重複呼叫 AI。
-import { callAI } from "./ai.js";
-import { updateItem } from "./itinerary.js";
+import { callAI } from "@/ai.js";
+import { updateItem } from "@/itinerary.js";
 
 const ICONS = {
   0: { icon: "☀️", label: "晴朗" }, 1: { icon: "🌤️", label: "大致晴朗" },

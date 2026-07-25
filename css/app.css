@@ -340,9 +340,16 @@ body.in-trip .tabbar { display: flex; }
 .ai-itin-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
 .itin-time small { display: block; font-weight: 600; color: var(--muted); font-size: 11px; }
 
-/* ---------- AI 助手（對話式排／改行程） ---------- */
-.ai-chat-head { display: flex; align-items: center; gap: 8px; }
-.ai-chat-scope { width: auto; max-width: 46vw; padding: 6px 10px; font-size: 13px; }
+/* ---------- AI 助手（對話式排／改行程／記帳／行李） ---------- */
+/* 標頭永遠一行：窄螢幕先壓縮範圍下拉，不夠再把標題省略成 …，
+   ✕ 是最後才想放棄的東西，所以不准縮。（「✨ AI 行李管家」＋「🧳 共用 / 全體」
+   在 360px 會把標題斷成兩行，標頭跟著變高——就是這條在擋。） */
+.modal-box--chat .card-head { flex-wrap: nowrap; }
+.modal-box--chat .card-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-chat-head { display: flex; align-items: center; gap: 8px; margin-left: auto; min-width: 0; flex: 0 1 auto; }
+.ai-chat-scope { width: auto; max-width: 46vw; min-width: 76px; flex: 0 1 auto;
+  padding: 6px 10px; font-size: 13px; text-overflow: ellipsis; }
+.ai-chat-head .btn { flex: 0 0 auto; }
 /* 對話串吃掉剩餘高度，輸入列永遠釘在底部 */
 .ai-chat-log { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 4px 2px; margin: 4px -2px; }
 .ai-chat-input { display: flex; align-items: flex-end; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line); }

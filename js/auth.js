@@ -1,5 +1,5 @@
 // 認證：管理員用 Email、成員用使用者名稱（合成 email）。
-import { supabase } from "./supabase.js";
+import { supabase } from "@/supabase.js";
 
 // 成員使用者名稱合成的 email 網域（無真實收信，僅作 Supabase 帳號識別）
 const MEMBER_DOMAIN = "guest.tripplanner.app";

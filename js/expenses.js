@@ -1,5 +1,5 @@
 // 記帳資料層：支出 + 分帳（CRUD + Realtime）。
-import { supabase } from "./supabase.js";
+import { supabase } from "@/supabase.js";
 
 // 取得支出（含分帳明細）
 export async function listExpenses(tripId) {
@@ -60,6 +60,12 @@ async function replaceSplits(expenseId, splits) {
 export async function deleteExpense(id) {
   const { error } = await supabase.from("expenses").delete().eq("id", id);
   if (error) throw error; // 分帳由 cascade 一起刪
+}
+
+// 清空整趟的支出（分帳同樣由 cascade 一起刪）
+export async function clearExpenses(tripId) {
+  const { error } = await supabase.from("expenses").delete().eq("trip_id", tripId);
+  if (error) throw error;
 }
 
 export function subscribeExpenses(tripId, onChange) {

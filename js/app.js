@@ -2,26 +2,26 @@
 import {
   login, logout, getSession, getProfile, onAuthChange,
   updateMyDisplayName, changeMyPassword,
-} from "./auth.js";
+} from "@/auth.js";
 import {
   CURRENCIES, CURRENCY_CODES, currencyLabel, pickColor, fmtMoney, ZERO_DECIMAL,
-} from "./constants.js";
-import { getRates, rateToBase } from "./fx.js";
+} from "@/constants.js";
+import { getRates, rateToBase } from "@/fx.js";
 import {
   listItems, addItem, updateItem, deleteItem, clearItems, subscribeItinerary,
-} from "./itinerary.js";
-import { attachSwipeDelete } from "./swipe.js";
+} from "@/itinerary.js";
+import { attachSwipeDelete } from "@/swipe.js";
 import {
-  listExpenses, addExpense, updateExpense, deleteExpense, subscribeExpenses,
-} from "./expenses.js";
+  listExpenses, addExpense, updateExpense, deleteExpense, clearExpenses, subscribeExpenses,
+} from "@/expenses.js";
 import {
-  listPacking, addPacking, updatePacking, deletePacking, subscribePacking,
-} from "./packing.js";
-import { computeBalances, currencyTotals, settleUp, splitEqually } from "./settle.js";
-import { loadItineraryWeather, loadCityWeather, getWeatherSummaries } from "./weather.js";
-import { callAI } from "./ai.js";
-import { escapeHtml, escapeAttr, toast, humanError } from "./ui.js";
-import { openAiChat, closeAiChat, bindAiChat } from "./aichat.js";
+  listPacking, addPacking, updatePacking, deletePacking, clearPacking, subscribePacking,
+} from "@/packing.js";
+import { computeBalances, currencyTotals, settleUp, splitEqually } from "@/settle.js";
+import { loadItineraryWeather, loadCityWeather, getWeatherSummaries } from "@/weather.js";
+import { callAI } from "@/ai.js";
+import { escapeHtml, escapeAttr, toast, humanError } from "@/ui.js";
+import { openAiChat, closeAiChat, bindAiChat } from "@/aichat.js";
 import {
   getSavedTrip, saveTrip, clearSavedTrip,
   createTrip, getTrip, getMyMember,
@@ -29,7 +29,7 @@ import {
   updateBaseCurrency, subscribeTrip, listMyTrips, deleteTrip,
   provisionMember, removeMember, updateTrip, adminAction,
   setTripAdmin, setMemberCanEdit,
-} from "./trip.js";
+} from "@/trip.js";
 
 const $ = (s) => document.querySelector(s);
 // 安全寫入：節點不存在就略過（避免快取到舊版 HTML 時整頁崩潰）
@@ -433,6 +433,7 @@ function applyPerms() {
   const editable = canEdit();
   document.body.classList.toggle("readonly", !editable);
   // 各分頁主要寫入按鈕（不存在就略過）
+  // 清空鈕另外由各自的 render 決定（沒東西可清時也要藏），這裡不碰
   ["#addItemBtn", "#aiItinBtn", "#addExpenseBtn", "#aiExpenseBtn", "#addPackingBtn", "#aiPackingBtn"]
     .forEach((sel) => setHidden(sel, !editable));
   // 基準幣別下拉：唯讀時停用（保留標籤文字）
@@ -1677,12 +1678,17 @@ async function renderExpenses(trip) {
 
   // 清單
   const list = $("#expenseList");
+  setHidden("#clearExpenseBtn", !expenses.length || !canEdit());
+  const clearBtn = $("#clearExpenseBtn");
+  if (clearBtn) clearBtn.onclick = () => onClearExpenses(trip, expenses);
   if (!expenses.length) {
     list.innerHTML = `<p class="status">還沒有任何支出，點「＋ 新增支出」開始記帳。</p>`;
   } else {
-    list.innerHTML = expenses.map((e) => renderExpenseRow(e, memberById, base)).join("");
-    list.querySelectorAll("[data-exp-edit]").forEach((b) =>
-      (b.onclick = () => openExpenseModal(expenses.find((x) => x.id === b.dataset.expEdit))));
+    list.innerHTML = expenses.map((e) => renderExpenseRow(e, memberById, base, canEdit())).join("");
+    list.querySelectorAll("[data-exp-edit]").forEach((b) => (b.onclick = (ev) => {
+      ev.stopPropagation();   // 卡片本身也可點；別讓外層再開一次
+      openExpenseModal(expenses.find((x) => x.id === b.dataset.expEdit));
+    }));
     if (canEdit()) {
       attachSwipeDelete(list, {
         rowSelector: ".exp-row",
@@ -1694,7 +1700,7 @@ async function renderExpenses(trip) {
   renderSettlement(expenses, base);
 }
 
-function renderExpenseRow(e, memberById, base) {
+function renderExpenseRow(e, memberById, base, editable = true) {
   const payer = memberById.get(e.paid_by);
   const inBase = Number(e.amount) * (Number(e.rate_to_base) || 1);
   const names = (e.expense_splits || []).map((s) => memberById.get(s.member_id)?.display_name).filter(Boolean);
@@ -1713,7 +1719,25 @@ function renderExpenseRow(e, memberById, base) {
           ${e.spent_at ? " · " + e.spent_at.slice(0, 10) : ""}
         </div>
       </div>
+      ${editable ? `<div class="itin-actions"><button class="btn btn--ghost btn--sm" type="button" data-exp-edit="${e.id}">編輯</button></div>` : ""}
     </div>`;
+}
+
+// 清空整趟支出。跟行程的清空一樣：不可復原，所以要先確認。
+async function onClearExpenses(trip, expenses) {
+  if (!guardEdit()) return;
+  const ok = await confirmDialog({
+    title: "清空記帳",
+    body: `會刪掉這趟全部 ${expenses.length} 筆支出與分帳紀錄，這個動作無法復原。`,
+    danger: true, okText: "清空",
+  });
+  if (!ok) return;
+  try {
+    await clearExpenses(trip.id);
+    toast(`已清空 ${expenses.length} 筆支出`);
+    await renderExpenses(trip);
+    renderDashboard().catch(() => {});
+  } catch (e) { toast(humanError(e), false); }
 }
 
 // 左滑刪除支出：復原時連分帳一起插回（addExpense 的第三個參數就吃 expense_splits 的形狀）
@@ -1890,6 +1914,12 @@ async function renderPacking(trip) {
   const total = items.length;
   const done = items.filter((i) => i.checked).length;
   setText("#packingProgress", total ? `（已打包 ${done}/${total}）` : "");
+
+  // 一鍵清空（唯讀成員不給）
+  setHidden("#clearPackingBtn", !total || !editable);
+  const clearBtn = $("#clearPackingBtn");
+  if (clearBtn) clearBtn.onclick = () => onClearPacking(trip, total, done);
+
   if (!items.length) {
     list.innerHTML = `<p class="status">還沒有任何物品，點「＋ 新增物品」，或用「✨ AI 助手」說一句「幫我列這趟要帶什麼」。</p>`;
     return;
@@ -1928,6 +1958,24 @@ async function renderPacking(trip) {
       onDelete: (row) => onSwipeDeletePacking(trip, items.find((i) => i.id === row.dataset.id)),
     });
   }
+}
+
+// 清空行李。比照行程的清空給兩個選項：收行李收到一半時，
+// 「只清已打包的」比「全部清掉」實用得多。
+async function onClearPacking(trip, total, done) {
+  if (!guardEdit()) return;
+  const ALL = "__all__";
+  const choices = [];
+  if (done) choices.push({ value: "checked", label: `只清已打包 · ${done} 項`, danger: true });
+  choices.push({ value: ALL, label: `清空全部 · ${total} 項`, danger: true });
+
+  const pick = await choiceDialog({ title: "清空行李", body: "這個動作無法復原。", choices });
+  if (pick === null) return;
+  try {
+    await clearPacking(trip.id, pick === "checked");
+    toast(`已清空 ${pick === ALL ? total : done} 項`);
+    await renderPacking(trip);
+  } catch (e) { toast(humanError(e), false); }
 }
 
 // 左滑刪除行李物品
@@ -2155,7 +2203,7 @@ function packCurText(k, item) {
 }
 
 const PACKING_CHAT = {
-  title: "✨ AI 行李管家",
+  title: "✨ AI 行李",
   hint: "AI 提出的變更會先列成清單，你確認後才會寫入行李。",
   placeholder: "說說行李要怎麼整理…（Enter 送出、Shift+Enter 換行）",
   mode: "edit_packing",

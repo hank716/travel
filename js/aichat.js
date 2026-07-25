@@ -9,8 +9,8 @@
 //
 // 各功能只要提供 adapter（見 cfg），不必再抄一次這些機制。
 
-import { callAI } from "./ai.js";
-import { escapeHtml, toast, humanError } from "./ui.js";
+import { callAI } from "@/ai.js";
+import { escapeHtml, toast, humanError } from "@/ui.js";
 
 const $ = (s) => document.querySelector(s);
 

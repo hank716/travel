@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#FFF4E8" />
   <title>旅程規劃 · Trip Planner</title>
-  <link rel="stylesheet" href="./css/app.css?v=20260726d" />
+  <link rel="stylesheet" href="./css/app.css?v=20260726f" />
 </head>
 <body>
   <header class="topbar">
@@ -230,6 +230,7 @@
           <div class="card-head">
             <h2 class="card-title">記帳</h2>
             <div style="display:flex; gap:8px;">
+              <button id="clearExpenseBtn" class="btn btn--ghost btn--sm" type="button" hidden>🗑️ 清空</button>
               <button id="aiExpenseBtn" class="btn btn--ghost btn--sm" type="button">✨ AI 記帳</button>
               <button id="addExpenseBtn" class="btn btn--sm" type="button">＋ 新增支出</button>
             </div>
@@ -279,6 +280,7 @@
           <div class="card-head">
             <h2 class="card-title">行李清單 <span id="packingProgress" class="status"></span></h2>
             <div style="display:flex; gap:8px;">
+              <button id="clearPackingBtn" class="btn btn--ghost btn--sm" type="button" hidden>🗑️ 清空</button>
               <button id="aiPackingBtn" class="btn btn--ghost btn--sm" type="button">✨ AI 助手</button>
               <button id="addPackingBtn" class="btn btn--sm" type="button">＋ 新增物品</button>
             </div>
@@ -675,7 +677,30 @@
 
   <div id="toast" class="toast" hidden></div>
 
-  <script src="./config.js?v=20260726d"></script>
-  <script type="module" src="./js/app.js?v=20260726d"></script>
+  <!-- 模組版本表：ES module 的 import 不會繼承 <script src> 的 ?v=，
+       漏掉就會變成「新的 app.js ＋ 舊快取的子模組」→ 匯出對不起來、整頁停在載入中。
+       所以每支模組都在這裡帶版本；改前端資產時把整份 index.html 的 ?v= 一起換掉即可。 -->
+  <script type="importmap">
+  {
+    "imports": {
+      "@/ai.js": "./js/ai.js?v=20260726f",
+      "@/aichat.js": "./js/aichat.js?v=20260726f",
+      "@/auth.js": "./js/auth.js?v=20260726f",
+      "@/constants.js": "./js/constants.js?v=20260726f",
+      "@/expenses.js": "./js/expenses.js?v=20260726f",
+      "@/fx.js": "./js/fx.js?v=20260726f",
+      "@/itinerary.js": "./js/itinerary.js?v=20260726f",
+      "@/packing.js": "./js/packing.js?v=20260726f",
+      "@/settle.js": "./js/settle.js?v=20260726f",
+      "@/supabase.js": "./js/supabase.js?v=20260726f",
+      "@/swipe.js": "./js/swipe.js?v=20260726f",
+      "@/trip.js": "./js/trip.js?v=20260726f",
+      "@/ui.js": "./js/ui.js?v=20260726f",
+      "@/weather.js": "./js/weather.js?v=20260726f"
+    }
+  }
+  </script>
+  <script src="./config.js?v=20260726f"></script>
+  <script type="module" src="./js/app.js?v=20260726f"></script>
 </body>
 </html>

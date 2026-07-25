@@ -1,5 +1,5 @@
 // 呼叫 Supabase Edge Function「ai-assist」（金鑰在 function 端，前端看不到）。
-import { supabase } from "./supabase.js";
+import { supabase } from "@/supabase.js";
 
 export async function callAI(mode, payload = {}) {
   const { data, error } = await supabase.functions.invoke("ai-assist", {

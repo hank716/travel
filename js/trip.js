@@ -1,5 +1,5 @@
 // 行程資料層：建立 / 加入 / 讀取 / 成員 / 啟用幣別 / Realtime。
-import { supabase } from "./supabase.js";
+import { supabase } from "@/supabase.js";
 
 const LS_KEY = "jp-trip-current"; // 記住目前所在行程
 

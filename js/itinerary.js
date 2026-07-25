@@ -1,5 +1,5 @@
 // 行程項目資料層：CRUD + Realtime。
-import { supabase } from "./supabase.js";
+import { supabase } from "@/supabase.js";
 
 export async function listItems(tripId) {
   const { data, error } = await supabase
