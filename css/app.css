@@ -405,6 +405,10 @@ body.in-trip .tabbar { display: flex; }
   .pack-row { flex-wrap: wrap; }
   .pack-body { flex-basis: 0; }
   .pack-row .itin-actions { flex-basis: 100%; flex-direction: row; justify-content: flex-end; }
+  /* 記帳列：編輯鈕留在同一行。上面那條 .itin-actions 的 width:100% 會把整列吃掉
+     （exp-body 被壓成一字一行），這裡收回來。記帳是要一眼掃完的清單，
+     不像行李適合讓按鈕獨佔一行——說明太長本來就用 .exp-desc 的 ellipsis 截字。 */
+  .exp-row .itin-actions { width: auto; }
   /* 顯示品牌字「旅程規劃」，並壓縮行程切換器寬度讓兩者並存 */
   .trip-switcher { max-width: 40vw; }
 }
