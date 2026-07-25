@@ -5,13 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#FFF4E8" />
   <title>旅程規劃 · Trip Planner</title>
-  <link rel="stylesheet" href="./css/app.css?v=20260726j" />
-  <!-- 網站圖示：SVG 優先（向量、深淺色都清楚），ico 給不吃 SVG favicon 的瀏覽器，
-       apple-touch-icon 是 iOS「加到主畫面」用的。圖檔會被瀏覽器長期快取，所以一樣帶 ?v=。 -->
-  <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg?v=20260726j" />
-  <link rel="icon" sizes="32x32" href="./assets/favicon.ico?v=20260726j" />
-  <link rel="icon" type="image/png" sizes="192x192" href="./assets/icon-192.png?v=20260726j" />
-  <link rel="apple-touch-icon" href="./assets/apple-touch-icon.png?v=20260726j" />
+  <link rel="stylesheet" href="./css/app.css?v=20260726k" />
+  <!-- 網站圖示：ico 排在最前面，裡面有 16/32/48/64/128/256 六種各自算過的點陣圖，
+       分頁列那種 16px 的尺寸靠它才會銳利；SVG 補高解析度場合；
+       apple-touch-icon 是 iOS「加到主畫面」用的。圖檔都由 tools/make-icons.py 產生。
+       圖檔會被瀏覽器長期快取，所以一樣帶 ?v=。 -->
+  <link rel="icon" sizes="16x16 32x32 48x48 64x64 128x128 256x256" href="./assets/favicon.ico?v=20260726k" />
+  <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg?v=20260726k" />
+  <link rel="icon" type="image/png" sizes="192x192" href="./assets/icon-192.png?v=20260726k" />
+  <link rel="icon" type="image/png" sizes="512x512" href="./assets/icon-512.png?v=20260726k" />
+  <link rel="apple-touch-icon" href="./assets/apple-touch-icon.png?v=20260726k" />
   <meta name="apple-mobile-web-app-title" content="旅程規劃" />
 </head>
 <body>
@@ -733,25 +736,25 @@
   <script type="importmap">
   {
     "imports": {
-      "@/ai.js": "./js/ai.js?v=20260726j",
-      "@/aichat.js": "./js/aichat.js?v=20260726j",
-      "@/auth.js": "./js/auth.js?v=20260726j",
-      "@/constants.js": "./js/constants.js?v=20260726j",
-      "@/expenses.js": "./js/expenses.js?v=20260726j",
-      "@/fx.js": "./js/fx.js?v=20260726j",
-      "@/itinerary.js": "./js/itinerary.js?v=20260726j",
-      "@/memo.js": "./js/memo.js?v=20260726j",
-      "@/packing.js": "./js/packing.js?v=20260726j",
-      "@/settle.js": "./js/settle.js?v=20260726j",
-      "@/supabase.js": "./js/supabase.js?v=20260726j",
-      "@/swipe.js": "./js/swipe.js?v=20260726j",
-      "@/trip.js": "./js/trip.js?v=20260726j",
-      "@/ui.js": "./js/ui.js?v=20260726j",
-      "@/weather.js": "./js/weather.js?v=20260726j"
+      "@/ai.js": "./js/ai.js?v=20260726k",
+      "@/aichat.js": "./js/aichat.js?v=20260726k",
+      "@/auth.js": "./js/auth.js?v=20260726k",
+      "@/constants.js": "./js/constants.js?v=20260726k",
+      "@/expenses.js": "./js/expenses.js?v=20260726k",
+      "@/fx.js": "./js/fx.js?v=20260726k",
+      "@/itinerary.js": "./js/itinerary.js?v=20260726k",
+      "@/memo.js": "./js/memo.js?v=20260726k",
+      "@/packing.js": "./js/packing.js?v=20260726k",
+      "@/settle.js": "./js/settle.js?v=20260726k",
+      "@/supabase.js": "./js/supabase.js?v=20260726k",
+      "@/swipe.js": "./js/swipe.js?v=20260726k",
+      "@/trip.js": "./js/trip.js?v=20260726k",
+      "@/ui.js": "./js/ui.js?v=20260726k",
+      "@/weather.js": "./js/weather.js?v=20260726k"
     }
   }
   </script>
-  <script src="./config.js?v=20260726j"></script>
-  <script type="module" src="./js/app.js?v=20260726j"></script>
+  <script src="./config.js?v=20260726k"></script>
+  <script type="module" src="./js/app.js?v=20260726k"></script>
 </body>
 </html>
