@@ -382,6 +382,10 @@ async function onCreateSubmit(e) {
       // 自己不參加：不進這趟，回管理頁繼續指派家人
       toast("已建立行程（你未加入）。請在「指派行程」把家人加進來。");
       if (!$("#view-admin").hidden) await renderAdmin();
+      // 沒有 enterTrip 幫忙刷新，行程清單得自己更新，否則新行程要重整才看得到
+      const trips = await listMyTrips();
+      renderMyTrips(trips);
+      renderDrawerTrips(trips);
     }
   } catch (err) {
     showError(humanError(err));
@@ -487,7 +491,7 @@ async function renderTrip(trip) {
         ${m.is_admin ? "" : `<button class="btn btn--ghost btn--sm" type="button" data-toggle-edit="${m.id}" data-can="${m.can_edit === false ? 0 : 1}">${m.can_edit === false ? "設可編輯" : "設唯讀"}</button>`}
         <button class="pill-x" type="button" data-rm-member="${m.id}" data-name="${escapeAttr(m.display_name)}" title="移除">×</button>` : "";
       return `<div class="member-chip">
-        <span class="avatar" style="background:${m.color}">${(m.display_name || "?").slice(0, 1)}</span>
+        <span class="avatar" style="background:${escapeAttr(m.color)}">${escapeHtml((m.display_name || "?").slice(0, 1))}</span>
         <span>${escapeHtml(m.display_name)}${roleTag}${isMe ? " <small class='status'>(你)</small>" : ""}${m.auth_uid ? "" : " <small class='status'>未登入</small>"}</span>
         ${manageBtns}
       </div>`;
@@ -872,7 +876,9 @@ function showLogin() {
   closeNav();
   unsubAll();             // 登出後別留著上一位使用者的 realtime 訂閱
   closeAiChat();          // 對話裡有這趟的資料，登出就清掉
-  state.profile = null; state.trip = null;
+  // 整組清乾淨：留著上一位使用者的成員快照，下一位登入後的短暫空窗期會看到別人的名字
+  state.profile = null; state.trip = null; state.me = null;
+  state.members = []; state.currencies = []; state.splitSel = new Set();
   $("#tripSwitcher").hidden = true; $("#tripSwitcherTitle").textContent = "";
   $("#accountBtn").hidden = true;
   $("#loginForm").hidden = false;
@@ -972,6 +978,7 @@ function validateItinOps(raw, refMap, scope, days) {
         if ((k === "start_time" || k === "end_time") && v && !HHMM.test(v)) continue;
         if (k === "day_date" && !okDay(v)) continue;   // 含空字串：不接受「取消日期」
         if (k === "title" && !v) continue;             // 不准把標題清空
+        if (k === "category" && !ITIN_CATEGORIES.includes(v)) continue;  // 只收白名單裡的分類
         if (v === curOf(item, k)) continue;            // 沒真的變就不列進預覽
         fields[k] = v;
       }
@@ -995,7 +1002,8 @@ function validateItinOps(raw, refMap, scope, days) {
           start_time: HHMM.test(st) ? st : "",
           end_time: HHMM.test(et) ? et : "",
           title,
-          category: String(it.category ?? "").trim(),
+          category: ITIN_CATEGORIES.includes(String(it.category ?? "").trim())
+            ? String(it.category).trim() : "",
           location_name: String(it.location_name ?? "").trim(),
           note: String(it.note ?? it.notes ?? "").trim(),
         },
@@ -1427,6 +1435,9 @@ function renderAddCurrency(trip, currencies) {
 
 // ---------- 行程項目 ----------
 const CATEGORY_ICON = { 景點:"📍", 餐廳:"🍜", 交通:"🚆", 住宿:"🏨", 購物:"🛍️", 其他:"✨" };
+// 行程項目的分類白名單（記帳 EXP_CATEGORIES / 行李 PACK_CATEGORIES 的對應物）。
+// AI 回傳的 category 以前是原封不動照收，這裡收斂成跟另外兩個功能一致。
+const ITIN_CATEGORIES = Object.keys(CATEGORY_ICON);
 
 function dayLabel(d) {
   if (!d) return "未排定";
@@ -1518,7 +1529,7 @@ function renderItemCard(it) {
       <div class="itin-time">${time || "·"}</div>
       <div class="itin-body">
         <div class="itin-title">${CATEGORY_ICON[it.category] || "•"} ${escapeHtml(it.title)}
-          ${it.category ? `<span class="tag">${it.category}</span>` : ""}</div>
+          ${it.category ? `<span class="tag">${escapeHtml(it.category)}</span>` : ""}</div>
         ${it.location_name ? `<div class="status">📍 ${escapeHtml(it.location_name)}</div>` : ""}
         ${it.notes ? `<div class="itin-notes">${escapeHtml(it.notes)}</div>` : ""}
       </div>
@@ -1849,7 +1860,7 @@ function renderSettlement(expenses, base) {
     const txt = b.net > 0.005 ? "應收 " + fmtMoney(b.net, base)
       : b.net < -0.005 ? "應付 " + fmtMoney(-b.net, base) : "結清";
     return `<div class="bal-row">
-      <span class="avatar avatar--sm" style="background:${b.member.color}">${(b.member.display_name || "?").slice(0, 1)}</span>
+      <span class="avatar avatar--sm" style="background:${escapeAttr(b.member.color)}">${escapeHtml((b.member.display_name || "?").slice(0, 1))}</span>
       <span class="bal-name">${escapeHtml(b.member.display_name)}</span>
       <span class="bal-net ${cls}">${txt}</span>
     </div>`;
@@ -1910,7 +1921,7 @@ function renderSplitChips() {
   wrap.innerHTML = state.members.map((m) => {
     const on = state.splitSel.has(m.id);
     return `<button type="button" class="chip-toggle ${on ? "is-on" : ""}" data-split="${m.id}">
-      <span class="avatar avatar--sm" style="background:${m.color}">${(m.display_name || "?").slice(0, 1)}</span>
+      <span class="avatar avatar--sm" style="background:${escapeAttr(m.color)}">${escapeHtml((m.display_name || "?").slice(0, 1))}</span>
       ${escapeHtml(m.display_name)}
     </button>`;
   }).join("");
@@ -2565,8 +2576,13 @@ async function showHub() {
   state.trip = null;
   let trips = [];
   try { trips = await listMyTrips(); } catch { /* 略過 */ }
-  // 只有一個行程 → 直接進入，省去先在總覽點選
-  if (trips.length === 1) { saveTrip(trips[0]); await enterTrip(trips[0].id); return; }
+  // 只有一個行程 → 直接進入，省去先在總覽點選。
+  // 進不去（例如剛好斷線）就退回中樞清單，不要讓整個啟動流程掛掉。
+  if (trips.length === 1) {
+    saveTrip(trips[0]);
+    try { await enterTrip(trips[0].id); return; }
+    catch (e) { toast(humanError(e), false); state.trip = null; }
+  }
   document.body.classList.add("in-trip"); // 顯示外殼 + 中樞
   show("appView");
   renderOverviewState();
@@ -2752,4 +2768,18 @@ async function boot() {
   else showLogin();
 }
 
-boot();
+// 啟動路徑上任何一個 await 掛掉（例如剛好斷線），沒有這層攔截就會永遠停在
+// 「載入中…」——沒有訊息也沒有重試入口，看起來就是整個 app 壞了。
+boot().catch((e) => {
+  console.error("啟動失敗", e);
+  const box = $("#bootView");
+  if (!box) return;
+  show("bootView");
+  box.innerHTML = `<p class="status" data-ok="false">載入失敗：${escapeHtml(humanError(e))}</p>`;
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn";
+  btn.textContent = "重新整理";
+  btn.onclick = () => location.reload();
+  box.appendChild(btn);
+});

@@ -113,8 +113,6 @@ alter table public.members alter column auth_uid drop default;
 alter table public.members add column if not exists is_admin boolean not null default false;
 -- 權限分級：可編輯 / 唯讀（既有成員預設可編輯，不影響現狀）
 alter table public.members add column if not exists can_edit boolean not null default true;
--- 天氣用：快取每個項目解析到的行政區（避免重複呼叫 AI）
-alter table public.itinerary_items add column if not exists weather_area text;
 
 create table if not exists public.itinerary_items (
   id            uuid primary key default gen_random_uuid(),
@@ -133,6 +131,10 @@ create table if not exists public.itinerary_items (
   created_by    uuid references public.members(id) on delete set null,
   created_at    timestamptz not null default now()
 );
+
+-- 相容性調整：天氣用，快取每個項目解析到的行政區（避免重複呼叫 AI）。
+-- 必須放在建表之後——放在前面的話，全新資料庫跑整份會在這行 relation does not exist 中斷。
+alter table public.itinerary_items add column if not exists weather_area text;
 
 create table if not exists public.expenses (
   id           uuid primary key default gen_random_uuid(),
@@ -517,6 +519,15 @@ drop policy if exists members_admin_delete on public.members;
 create policy members_admin_delete on public.members for delete
   to authenticated
   using (private.is_trip_admin(trip_id));
+
+-- ⚠️ 跟 profiles 一模一樣的坑：RLS 是「整列」層級的，擋不住欄位。
+-- members_update_own 只驗「這列是不是你的」，所以光有政策，唯讀成員就能自己
+-- 把 can_edit / is_admin 設成 true（甚至改 trip_id 把自己搬進別趟）。
+-- 前端唯一會 UPDATE members 的是改顯示名稱；提權一律走 set_trip_admin /
+-- set_member_can_edit（SECURITY DEFINER）或 admin-users（service_role），
+-- 兩者都不吃 authenticated 的欄位權限，收掉不影響它們。
+revoke update on public.members from authenticated;
+grant  update (display_name) on public.members to authenticated;
 
 -- itinerary / expenses：成員/admin 可讀；可編輯成員可寫。
 drop policy if exists itinerary_select on public.itinerary_items;

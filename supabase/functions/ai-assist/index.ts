@@ -6,6 +6,7 @@
 // 前端呼叫：supabase.functions.invoke("ai-assist", { body: { mode, ... } })
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -33,6 +34,21 @@ function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status, headers: { ...CORS, "Content-Type": "application/json" },
   });
+}
+
+// 驗證呼叫者：Authorization 必須是「使用者」的 JWT，anon key 會在 getUser 這關被打回。
+// 回傳 null = 未登入；否則回 { id, isAdmin }（比照 admin-users 的做法）。
+async function authenticate(req: Request): Promise<{ id: string; isAdmin: boolean } | null> {
+  const jwt = (req.headers.get("Authorization") || "").replace("Bearer ", "").trim();
+  if (!jwt) return null;
+  const url = Deno.env.get("SUPABASE_URL");
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!url || !serviceKey) throw new Error("尚未設定 SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY");
+  const admin = createClient(url, serviceKey, { auth: { persistSession: false } });
+  const { data, error } = await admin.auth.getUser(jwt);
+  if (error || !data.user) return null;
+  const { data: prof } = await admin.from("profiles").select("is_admin").eq("id", data.user.id).maybeSingle();
+  return { id: data.user.id, isAdmin: !!prof?.is_admin };
 }
 
 function apiKey(): string {
@@ -396,9 +412,17 @@ function editPackingPrompt(payload: Record<string, unknown>): string {
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
+    // 一定要驗身分。gateway 只檢查「是不是合法 JWT」，而 anon key 本來就是公開的
+    // （config.js、keepalive workflow 都寫著），沒有這段的話任何人都能拿它把
+    // Gemini 配額燒光、或把這支函式當免費 LLM proxy 用。
+    const caller = await authenticate(req);
+    if (!caller) return json({ error: "未登入" }, 401);
+
     const { mode, ...payload } = await req.json().catch(() => ({}));
     switch (mode) {
       case "diag":
+        // 排障用（window.__aiDiag()），會回報模型探測結果，限管理員
+        if (!caller.isAdmin) return json({ error: "僅限管理員" }, 403);
         return json(await diagnose());
       case "weather_suggest": {
         const { text, model } = await gemini(weatherPrompt(payload), { maxTokens: 2048, mode });

@@ -1,6 +1,7 @@
 // 天氣：行程地點 →（AI 推斷行政區）→ Open-Meteo 即時預報（超過範圍改去年同期參考）。
 // 解析到的座標寫回 itinerary_items.lat/lng/weather_area 快取，避免重複呼叫 AI。
 import { callAI } from "@/ai.js";
+import { ymd } from "@/constants.js";
 import { updateItem } from "@/itinerary.js";
 
 const ICONS = {
@@ -220,8 +221,9 @@ export async function loadCityWeather(query) {
   grid.innerHTML = `<div class="fc-skeleton"></div>`;
   const geo = await geocode(query);
   if (!geo) { grid.innerHTML = `<p class="status">找不到「${esc(query)}」這個地點。</p>`; lastSummaries = []; return []; }
+  // 用本地日期：toISOString() 是 UTC，台北時間早上 8 點前會查成昨天
   const dates = [0, 1, 2].map((o) => {
-    const d = new Date(); d.setDate(d.getDate() + o); return d.toISOString().slice(0, 10);
+    const d = new Date(); d.setDate(d.getDate() + o); return ymd(d);
   });
   const entries = await Promise.all(dates.map(async (date) => {
     try { return { date, query, geo, res: await fetchDay(geo.lat, geo.lon, date) }; }
