@@ -1,5 +1,5 @@
 // 行程項目資料層：CRUD + Realtime。
-import { supabase } from "@/supabase.js";
+import { supabase, subscribeChannel } from "@/supabase.js";
 
 // 一律照「時間前後」排：日期 → 開始時間 → 結束時間 → sort_order → 建立時間。
 //
@@ -58,11 +58,7 @@ export async function clearItems(tripId, day = null) {
 }
 
 export function subscribeItinerary(tripId, onChange) {
-  const channel = supabase
-    .channel("itin-" + tripId)
-    .on("postgres_changes",
-      { event: "*", schema: "public", table: "itinerary_items", filter: `trip_id=eq.${tripId}` },
-      onChange)
-    .subscribe();
-  return () => supabase.removeChannel(channel);
+  return subscribeChannel("itin-" + tripId, [
+    { event: "*", schema: "public", table: "itinerary_items", filter: `trip_id=eq.${tripId}` },
+  ], onChange);
 }

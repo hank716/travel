@@ -18,6 +18,10 @@ import {
 import {
   listPacking, addPacking, updatePacking, deletePacking, clearPacking, subscribePacking,
 } from "@/packing.js";
+import {
+  listMemos, addMemo, updateMemo, deleteMemo,
+  listComments, addComment, deleteComment, subscribeMemo,
+} from "@/memo.js";
 import { computeBalances, currencyTotals, settleUp, splitEqually } from "@/settle.js";
 import { loadItineraryWeather, loadCityWeather, getWeatherSummaries } from "@/weather.js";
 import { callAI } from "@/ai.js";
@@ -43,6 +47,7 @@ let unsub = null;       // 行程/成員 realtime 取消訂閱
 let unsubItin = null;   // 行程項目 realtime 取消訂閱
 let unsubExp = null;    // 記帳 realtime 取消訂閱
 let unsubPacking = null; // 行李 realtime 取消訂閱
+let unsubMemo = null;   // 備忘錄 realtime 取消訂閱
 let createCurrencies = new Set(); // 建立行程時已選的幣別
 let adminTrips = [];              // 管理頁目前的行程清單（指派行程彈窗用）
 const state = {
@@ -60,20 +65,35 @@ function guardEdit() {
   return false;
 }
 
-// ---------- 分頁路由（桌機側欄 + 手機底部分頁列共用 data-page）----------
-const PAGES = ["overview", "itinerary", "expenses", "weather", "packing", "admin"];
+// ---------- 分頁路由（側欄 nav-item 的 data-page）----------
+const PAGES = ["overview", "itinerary", "expenses", "weather", "packing", "memo", "admin"];
 
 function showPage(name) {
   if (!PAGES.includes(name)) name = "overview";
   if (name === "admin" && !isAdmin()) name = "overview";        // 管理頁僅管理員
   if (!state.trip && name !== "overview" && name !== "admin") name = "overview"; // 沒選行程只能看總覽/管理
   PAGES.forEach((p) => ($("#view-" + p).hidden = p !== name));
-  document.querySelectorAll(".nav-item, .tab-item").forEach((b) => b.classList.toggle("is-active", b.dataset.page === name));
+  document.querySelectorAll(".nav-item").forEach((b) => b.classList.toggle("is-active", b.dataset.page === name));
   if (location.hash.slice(1) !== name) history.replaceState(null, "", "#" + name);
   closePopovers();
+  closeNav();
   if (name === "weather") ensureWeather();
   if (name === "packing") renderPacking(state.trip).catch(console.error);
+  if (name === "memo") renderMemo(state.trip).catch(console.error);
   if (name === "admin") renderAdmin();
+}
+
+// ---------- 手機側欄抽屜（桌機是常駐側欄，這些切換不影響它）----------
+function openNav() {
+  document.body.classList.add("nav-open");
+  setHidden("#navScrim", false);
+  $("#navToggle")?.setAttribute("aria-expanded", "true");
+}
+function closeNav() {
+  document.body.classList.remove("nav-open");
+  setHidden("#navScrim", true);
+  $("#navToggle")?.setAttribute("aria-expanded", "false");
+  closeDrawerTrips();
 }
 
 // ---------- 頂部：行程切換器 + 帳號選單（popover）----------
@@ -91,10 +111,29 @@ function tripWhenHtml(t) {
   return `${when}${done ? ' <span class="tag">已結束</span>' : ""}`;
 }
 
-// 頂部切換器文字 / 顯隱（標題只出現在頂部一處）
+// 目前行程的標題：桌機在頂部切換器，手機在側欄抽屜（同一份文字，兩處同步）
 function renderTripSwitcher() {
   setHidden("#tripSwitcher", !state.trip);
   setText("#tripSwitcherTitle", state.trip ? state.trip.title : "");
+  setText("#drawerTripTitle", state.trip ? state.trip.title : "切換行程");
+}
+
+// 行程清單的列。頂部 popover（桌機）與側欄抽屜（手機）共用同一份標記與行為。
+function tripListHtml(trips, curId) {
+  if (!trips?.length) return `<div class="popover-head">尚無行程</div>`;
+  return trips.map((t) => `
+    <button class="popover-item ${t.id === curId ? "is-current" : ""}" type="button" data-go="${t.id}">
+      ${escapeHtml(t.title)}
+      <span class="sub">${tripWhenHtml(t)}</span>
+    </button>`).join("");
+}
+function bindTripGo(container, trips, curId, before) {
+  container.querySelectorAll("[data-go]").forEach((b) => (b.onclick = () => {
+    before?.();
+    const t = trips?.find((x) => x.id === b.dataset.go);
+    if (!t || t.id === curId) return;   // 已經在這趟，不必重進
+    saveTrip(t); enterTrip(t.id).catch((e) => toast(humanError(e), false));
+  }));
 }
 
 async function openTripMenu() {
@@ -106,22 +145,33 @@ async function openTripMenu() {
   let trips = [];
   try { trips = await listMyTrips(); } catch { /* ignore */ }
   const cur = state.trip?.id;
-  let html = `<div class="popover-head">切換行程</div>`;
-  html += trips.length ? trips.map((t) => `
-    <button class="popover-item ${t.id === cur ? "is-current" : ""}" type="button" data-go="${t.id}">
-      ${escapeHtml(t.title)}
-      <span class="sub">${tripWhenHtml(t)}</span>
-    </button>`).join("") : `<div class="popover-head">尚無行程</div>`;
+  let html = `<div class="popover-head">切換行程</div>` + tripListHtml(trips, cur);
   if (isAdmin()) html += `<div class="popover-sep"></div><button class="popover-item" type="button" data-admin="1">⚙️ 管理行程與帳號</button>`;
   menu.innerHTML = html;
-  menu.querySelectorAll("[data-go]").forEach((b) => (b.onclick = () => {
-    closePopovers();
-    const t = trips.find((x) => x.id === b.dataset.go);
-    if (!t || t.id === cur) return;
-    saveTrip(t); enterTrip(t.id).catch((e) => toast(humanError(e), false));
-  }));
+  bindTripGo(menu, trips, cur, closePopovers);
   const adminBtn = menu.querySelector("[data-admin]");
   if (adminBtn) adminBtn.onclick = () => { closePopovers(); showPage("admin"); };
+}
+
+// 側欄裡的行程切換（手機唯一入口，桌機也順便有一份）
+function closeDrawerTrips() {
+  setHidden("#drawerTripList", true);
+  $("#drawerTripBtn")?.setAttribute("aria-expanded", "false");
+}
+function renderDrawerTrips(trips) {
+  const btn = $("#drawerTripBtn");
+  const list = $("#drawerTripList");
+  if (!btn || !list) return;
+  const cur = state.trip?.id;
+  setHidden("#drawerTripBtn", !trips?.length);
+  renderTripSwitcher();
+  list.innerHTML = tripListHtml(trips, cur);
+  bindTripGo(list, trips, cur, closeNav);
+  btn.onclick = () => {
+    const open = list.hidden;
+    list.hidden = !open;
+    btn.setAttribute("aria-expanded", open ? "true" : "false");
+  };
 }
 
 function openAccountMenu() {
@@ -341,14 +391,17 @@ async function onCreateSubmit(e) {
 }
 
 // ---------- 行程主畫面 ----------
+// 連點兩趟不同行程時，兩輪 enterTrip 的 await 會交錯，後面那輪畫到一半又被前面那輪覆蓋，
+// 訂閱也會重複。用序號當令牌：每個 await 之後確認自己還是最新的一輪，不是就直接退場。
+let enterSeq = 0;
 async function enterTrip(tripId) {
-  if (unsub) { unsub(); unsub = null; }
-  if (unsubItin) { unsubItin(); unsubItin = null; }
-  if (unsubExp) { unsubExp(); unsubExp = null; }
-  if (unsubPacking) { unsubPacking(); unsubPacking = null; }
+  const my = ++enterSeq;
+  unsubAll();
   const trip = await getTrip(tripId);
+  if (my !== enterSeq) return;
   state.trip = trip;
   state.me = await getMyMember(tripId);
+  if (my !== enterSeq) return;
   state.mapInit = false;   // 進新行程時重設地圖預設
   const frame = $("#mapFrame");
   if (frame) { frame.hidden = true; frame.removeAttribute("src"); }
@@ -356,36 +409,57 @@ async function enterTrip(tripId) {
   state.weatherLoaded = false;
   packCtxCache = null;     // 換行程了，行李 AI 的天氣/行程情境要重抓
   await renderTrip(trip);
+  if (my !== enterSeq) return;
   await renderItinerary(trip);
+  if (my !== enterSeq) return;
   await renderExpenses(trip);
+  if (my !== enterSeq) return;
 
   document.body.classList.add("in-trip");
   show("appView");
-  // 頂部行程切換器顯示目前行程（標題只出現在頂部一處）
+  // 目前行程標題（桌機頂部切換器 / 手機側欄）
   renderTripSwitcher();
   renderOverviewState();
-  renderMyTrips(await listMyTrips());
+  const trips = await listMyTrips();
+  if (my !== enterSeq) return;
+  renderMyTrips(trips);
+  renderDrawerTrips(trips);
   // 進入時依 hash 決定起始頁
   showPage(PAGES.includes(location.hash.slice(1)) ? location.hash.slice(1) : "overview");
 
-  // 即時：成員/幣別變動就重畫
-  unsub = subscribeTrip(tripId, () => renderTrip(trip).catch(console.error));
-  // 即時：行程項目變動就重畫（天氣只標記失效，下次開或按重新整理才重載，避免座標回寫造成連環重載）
-  unsubItin = subscribeItinerary(tripId, () => {
-    state.weatherLoaded = false;
-    packCtxCache = null;   // 行程改了，行李 AI 看到的活動也要跟著更新
-    renderItinerary(trip).catch(console.error);
-    renderDashboard().catch(() => {});
-  });
-  // 即時：記帳變動就重畫
-  unsubExp = subscribeExpenses(tripId, () => {
-    renderExpenses(trip).catch(console.error);
-    renderDashboard().catch(() => {});
-  });
-  // 即時：行李變動就重畫
-  unsubPacking = subscribePacking(tripId, () => {
-    renderPacking(trip).catch(console.error);
-  });
+  // 即時同步。純加分功能：連不上不該讓「進入行程」整個失敗，所以包起來。
+  try {
+    // 成員/幣別變動就重畫
+    unsub = subscribeTrip(tripId, () => renderTrip(trip).catch(console.error));
+    // 行程項目變動就重畫（天氣只標記失效，下次開或按重新整理才重載，避免座標回寫造成連環重載）
+    unsubItin = subscribeItinerary(tripId, () => {
+      state.weatherLoaded = false;
+      packCtxCache = null;   // 行程改了，行李 AI 看到的活動也要跟著更新
+      renderItinerary(trip).catch(console.error);
+      renderDashboard().catch(() => {});
+    });
+    // 記帳變動就重畫
+    unsubExp = subscribeExpenses(tripId, () => {
+      renderExpenses(trip).catch(console.error);
+      renderDashboard().catch(() => {});
+    });
+    // 行李變動就重畫
+    unsubPacking = subscribePacking(tripId, () => {
+      renderPacking(trip).catch(console.error);
+    });
+    // 備忘錄／留言變動就重畫
+    unsubMemo = subscribeMemo(tripId, () => {
+      if (!$("#view-memo").hidden) renderMemo(trip).catch(console.error);
+    });
+  } catch (e) {
+    console.warn("realtime 訂閱失敗（不影響瀏覽）", e);
+  }
+}
+
+// 離開行程／換行程／刪行程時，一次收掉所有 realtime 訂閱
+function unsubAll() {
+  for (const fn of [unsub, unsubItin, unsubExp, unsubPacking, unsubMemo]) { try { fn?.(); } catch { /* ignore */ } }
+  unsub = unsubItin = unsubExp = unsubPacking = unsubMemo = null;
 }
 
 async function renderTrip(trip) {
@@ -444,7 +518,8 @@ function applyPerms() {
   document.body.classList.toggle("readonly", !editable);
   // 各分頁主要寫入按鈕（不存在就略過）
   // 清空鈕另外由各自的 render 決定（沒東西可清時也要藏），這裡不碰
-  ["#addItemBtn", "#aiItinBtn", "#addExpenseBtn", "#aiExpenseBtn", "#addPackingBtn", "#aiPackingBtn"]
+  ["#addItemBtn", "#aiItinBtn", "#addExpenseBtn", "#aiExpenseBtn", "#addPackingBtn", "#aiPackingBtn",
+   "#addMemoBtn"]
     .forEach((sel) => setHidden(sel, !editable));
   // 基準幣別下拉：唯讀時停用（保留標籤文字）
   const baseSel = $("#baseSelect"); if (baseSel) baseSel.disabled = !editable;
@@ -526,14 +601,14 @@ async function renderDashboard() {
   setHTML("#upcomingList", upcomingHtml(items));
 }
 
-// 切換「有/無選定行程」的總覽呈現 + 分頁可用性（側欄與底部列同步）
+// 切換「有/無選定行程」的總覽呈現 + 分頁可用性
 function renderOverviewState() {
   const has = !!state.trip;
   $("#overviewTripDetail").hidden = !has;
   $("#noTripHint").hidden = has;
   renderTripSwitcher();
   // 沒選行程時，行程/記帳/天氣分頁不可用；總覽與管理頁永遠可用
-  document.querySelectorAll(".nav-item, .tab-item").forEach((b) => {
+  document.querySelectorAll(".nav-item").forEach((b) => {
     if (b.dataset.page !== "overview" && b.dataset.page !== "admin") b.classList.toggle("is-disabled", !has);
   });
 }
@@ -794,6 +869,8 @@ function loginErr(err) {
 function showLogin() {
   document.body.classList.remove("in-trip");
   closePopovers();
+  closeNav();
+  unsubAll();             // 登出後別留著上一位使用者的 realtime 訂閱
   closeAiChat();          // 對話裡有這趟的資料，登出就清掉
   state.profile = null; state.trip = null;
   $("#tripSwitcher").hidden = true; $("#tripSwitcherTitle").textContent = "";
@@ -816,8 +893,8 @@ function applyAccountUI() {
   // 頂部帳號鈕（手機登出入口）
   setHidden("#accountBtn", !p);
   setText("#accountInitial", (name || "·").slice(0, 1).toUpperCase());
-  // 管理頁入口（側欄 + 底部列同步）
-  document.querySelectorAll('.nav-item[data-page="admin"], .tab-item[data-page="admin"]')
+  // 管理頁入口（僅管理員）
+  document.querySelectorAll('.nav-item[data-page="admin"]')
     .forEach((el) => (el.hidden = !isAdmin()));
 }
 async function onLoggedIn() {
@@ -2069,6 +2146,155 @@ async function onPackingDelete() {
   catch (e) { toast(humanError(e), false); }
 }
 
+// ---------- 備忘錄（共筆筆記 + 留言） ----------
+// 權限：筆記＝可編輯成員（同行程/記帳）；留言＝這趟的所有成員（唯讀成員也能討論），
+// 留言只有作者本人或行程管理員能刪。前端只是體驗層，真正把關的是 RLS。
+
+// 今年的省略年份，跨年的行程才看得出是哪一年
+function fmtWhen(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(+d)) return "";
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  const y = d.getFullYear() === new Date().getFullYear() ? "" : `${d.getFullYear()}/`;
+  return `${y}${mm}/${dd} ${hh}:${mi}`;
+}
+
+const memberName = (id) =>
+  state.members.find((m) => m.id === id)?.display_name || "（已移除成員）";
+const memberColor = (id) =>
+  state.members.find((m) => m.id === id)?.color || "#9a8b7d";
+
+async function renderMemo(trip) {
+  if (!trip) return;
+  const list = $("#memoList");
+  if (!list) return;
+  const [memos, comments] = await Promise.all([listMemos(trip.id), listComments(trip.id)]);
+  const editable = canEdit();
+  setHidden("#addMemoBtn", !editable);
+
+  if (!memos.length) {
+    list.innerHTML = editable
+      ? `<p class="status">還沒有任何筆記，點「＋ 新增筆記」開一則。</p>`
+      : `<p class="status">還沒有任何筆記。</p>`;
+    return;
+  }
+
+  const byMemo = new Map();
+  for (const c of comments) {
+    if (!byMemo.has(c.memo_id)) byMemo.set(c.memo_id, []);
+    byMemo.get(c.memo_id).push(c);
+  }
+  const canDeleteComment = (c) => !!(state.me && (c.member_id === state.me.id || state.me.is_admin));
+
+  list.innerHTML = memos.map((m) => {
+    const cs = byMemo.get(m.id) || [];
+    return `
+      <article class="memo-card" data-id="${m.id}">
+        <div class="memo-head">
+          <h3 class="memo-title">${m.pinned ? "📌 " : ""}${escapeHtml(m.title || "（無標題）")}</h3>
+          ${editable ? `<button class="btn btn--ghost btn--sm" type="button" data-memo-edit="${m.id}">編輯</button>` : ""}
+        </div>
+        <p class="status memo-meta">${escapeHtml(memberName(m.created_by))} · ${fmtWhen(m.created_at)}</p>
+        ${m.body ? `<div class="memo-body">${escapeHtml(m.body)}</div>` : ""}
+        <div class="memo-comments">
+          <h4 class="memo-comments-head">留言 <span class="status">${cs.length}</span></h4>
+          ${cs.map((c) => `
+            <div class="memo-comment">
+              <span class="avatar avatar--sm" style="background:${escapeAttr(memberColor(c.member_id))}">${escapeHtml((memberName(c.member_id) || "?").slice(0, 1))}</span>
+              <div class="memo-comment-body">
+                <span class="status">${escapeHtml(memberName(c.member_id))} · ${fmtWhen(c.created_at)}</span>
+                <div>${escapeHtml(c.body)}</div>
+              </div>
+              ${canDeleteComment(c) ? `<button class="pill-x" type="button" data-comment-del="${c.id}" title="刪除留言">×</button>` : ""}
+            </div>`).join("")}
+          ${state.me ? `
+          <form class="memo-comment-form" data-memo="${m.id}">
+            <input name="body" placeholder="留言…" maxlength="500" autocomplete="off" />
+            <button class="btn btn--sm" type="submit">送出</button>
+          </form>` : `<p class="status">你不是這趟的成員，無法留言。</p>`}
+        </div>
+      </article>`;
+  }).join("");
+
+  list.querySelectorAll("[data-memo-edit]").forEach((b) =>
+    (b.onclick = () => openMemoModal(memos.find((m) => m.id === b.dataset.memoEdit))));
+  list.querySelectorAll("[data-comment-del]").forEach((b) =>
+    (b.onclick = () => onDeleteComment(b.dataset.commentDel)));
+  list.querySelectorAll(".memo-comment-form").forEach((f) =>
+    f.addEventListener("submit", onAddComment));
+}
+
+function openMemoModal(memo) {
+  if (!guardEdit()) return;
+  const f = $("#memoForm");
+  f.reset();
+  $("#memoError").hidden = true;
+  const editing = !!memo;
+  $("#memoModalTitle").textContent = editing ? "編輯筆記" : "新增筆記";
+  $("#memoDeleteBtn").hidden = !editing;
+  f.id.value = memo?.id || "";
+  f.title.value = memo?.title || "";
+  f.body.value = memo?.body || "";
+  f.pinned.checked = !!memo?.pinned;
+  $("#memoModal").hidden = false;
+}
+function closeMemoModal() { $("#memoModal").hidden = true; }
+
+async function onMemoSubmit(e) {
+  e.preventDefault();
+  const f = e.target;
+  const err = $("#memoError"); err.hidden = true;
+  const payload = {
+    title: f.title.value.trim() || null,
+    body: f.body.value.trim(),
+    pinned: f.pinned.checked,
+  };
+  if (!payload.title && !payload.body) {
+    err.textContent = "標題與內容至少要填一個。"; err.hidden = false; return;
+  }
+  try {
+    setBusy(f, true);
+    if (f.id.value) await updateMemo(f.id.value, payload);
+    else await addMemo(state.trip.id, payload, state.me?.id);
+    closeMemoModal();
+    await renderMemo(state.trip);
+  } catch (e2) { err.textContent = humanError(e2); err.hidden = false; }
+  finally { setBusy(f, false); }
+}
+
+async function onMemoDelete() {
+  const id = $("#memoForm").id.value;
+  if (!id) return;
+  if (!await confirmDialog({ title: "刪除筆記", body: "確定刪除這則筆記？底下的留言也會一起刪除。", danger: true, okText: "刪除" })) return;
+  try { await deleteMemo(id); closeMemoModal(); await renderMemo(state.trip); }
+  catch (e) { toast(humanError(e), false); }
+}
+
+// 留言不受 canEdit() 限制：唯讀成員也能參與討論（RLS 用的是 is_trip_member）
+async function onAddComment(e) {
+  e.preventDefault();
+  const f = e.target;
+  const body = f.body.value.trim();
+  if (!body) return;
+  if (!state.me) { toast("你不是這趟的成員，無法留言", false); return; }
+  try {
+    setBusy(f, true);
+    await addComment(state.trip.id, f.dataset.memo, state.me.id, body);
+    f.reset();
+    await renderMemo(state.trip);
+  } catch (e2) { toast(humanError(e2), false); }
+  finally { setBusy(f, false); }
+}
+
+async function onDeleteComment(id) {
+  if (!await confirmDialog({ title: "刪除留言", body: "確定刪除這則留言？", danger: true, okText: "刪除" })) return;
+  try { await deleteComment(id); await renderMemo(state.trip); }
+  catch (e) { toast(humanError(e), false); }
+}
+
 // ---------- AI 行李管家（對話式）----------
 // 範圍下拉在這裡是「歸屬」（全部／共用／某成員），對應行程 AI 的「哪一天」。
 // 除了 #n 代號那一套，還會把天氣摘要與行程活動當情境餵給模型 —— 這是舊版一鍵建議最有價值的部分。
@@ -2346,6 +2572,7 @@ async function showHub() {
   renderOverviewState();
   showPage("overview");
   renderMyTrips(trips);
+  renderDrawerTrips(trips);
   // 管理員若還沒有行程，直接開建立 Modal
   if (!trips.length && isAdmin()) openTripModal();
 }
@@ -2373,6 +2600,7 @@ function renderMyTrips(trips) {
   list.querySelectorAll("[data-enter]").forEach((b) =>
     (b.onclick = () => {
       const t = trips.find((x) => x.id === b.dataset.enter);
+      if (!t || t.id === cur) return;   // 已經在這趟了，重進沒有意義（還會白重訂閱一輪）
       saveTrip(t);
       enterTrip(t.id).catch((e) => toast(humanError(e), false));
     }));
@@ -2385,15 +2613,14 @@ async function onDeleteTrip(id, title) {
     const wasCurrent = state.trip?.id === id;
     if (getSavedTrip()?.id === id) clearSavedTrip();
     if (wasCurrent) {
-      if (unsub) { unsub(); unsub = null; }
-      if (unsubItin) { unsubItin(); unsubItin = null; }
-      if (unsubExp) { unsubExp(); unsubExp = null; }
-      if (unsubPacking) { unsubPacking(); unsubPacking = null; }
+      unsubAll();
       state.trip = null;
       renderOverviewState();
     }
     toast("已刪除行程");
-    renderMyTrips(await listMyTrips());
+    const trips = await listMyTrips();
+    renderMyTrips(trips);
+    renderDrawerTrips(trips);
   } catch (e) { toast(humanError(e), false); }
 }
 
@@ -2455,6 +2682,13 @@ async function boot() {
   $("#packingModal").addEventListener("click", (e) => { if (e.target.id === "packingModal") closePackingModal(); });
   $("#aiPackingBtn").onclick = () => openAiChat(PACKING_CHAT);
 
+  // 備忘錄
+  $("#addMemoBtn").onclick = () => openMemoModal(null);
+  $("#memoModalClose").onclick = closeMemoModal;
+  $("#memoForm").addEventListener("submit", onMemoSubmit);
+  $("#memoDeleteBtn").onclick = onMemoDelete;
+  $("#memoModal").addEventListener("click", (e) => { if (e.target.id === "memoModal") closeMemoModal(); });
+
   // 行程項目 modal
   $("#addItemBtn").onclick = () => openItemModal(null);
   $("#itemModalClose").onclick = closeItemModal;
@@ -2464,8 +2698,12 @@ async function boot() {
     if (e.target.id === "itemModal") closeItemModal(); // 點背景關閉
   });
 
-  // 分頁路由（側欄 + 底部列）
-  document.querySelectorAll(".nav-item, .tab-item").forEach((b) => (b.onclick = () => showPage(b.dataset.page)));
+  // 分頁路由（側欄）
+  document.querySelectorAll(".nav-item").forEach((b) => (b.onclick = () => showPage(b.dataset.page)));
+
+  // 手機漢堡選單
+  $("#navToggle").onclick = () => (document.body.classList.contains("nav-open") ? closeNav() : openNav());
+  $("#navScrim").onclick = closeNav;
 
   // 總覽快速統計卡 / 「查看全部」→ 跳頁；成員卡 → 捲到成員區
   document.querySelectorAll('#view-overview [data-page]').forEach((b) => (b.onclick = () => showPage(b.dataset.page)));
@@ -2478,7 +2716,7 @@ async function boot() {
   document.addEventListener("click", (e) => {
     if (!e.target.closest("#tripMenu, #tripSwitcher, #accountMenu, #accountBtn")) closePopovers();
   });
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePopovers(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closePopovers(); closeNav(); } });
   window.addEventListener("hashchange", () => {
     if (!$("#appView").hidden) showPage(location.hash.slice(1) || "overview");
   });

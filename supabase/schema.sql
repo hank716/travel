@@ -170,6 +170,30 @@ create table if not exists public.packing_items (
   created_at timestamptz not null default now()
 );
 
+-- 備忘錄：每趟行程的共筆筆記。筆記本身只有可編輯成員能動，
+-- 但底下的留言是給全體同行者討論用的（唯讀成員也能發言）。
+create table if not exists public.memos (
+  id         uuid primary key default gen_random_uuid(),
+  trip_id    uuid not null references public.trips(id) on delete cascade,
+  title      text,
+  body       text not null default '',
+  pinned     boolean not null default false,          -- 置頂（重要事項壓在最上面）
+  created_by uuid references public.members(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+-- 留言。trip_id 刻意跟著存一份（非正規化）：RLS 與 realtime filter 都能直接用 trip_id，
+-- 不必像 expense_splits 那樣每條 policy 都回頭 join 母表。
+create table if not exists public.memo_comments (
+  id         uuid primary key default gen_random_uuid(),
+  memo_id    uuid not null references public.memos(id) on delete cascade,
+  trip_id    uuid not null references public.trips(id) on delete cascade,
+  member_id  uuid references public.members(id) on delete set null,
+  body       text not null,
+  created_at timestamptz not null default now()
+);
+
 -- 匯率每日快取（公開資料，所有登入者可讀寫，少打外部 API）
 create table if not exists public.fx_cache (
   date  date not null,
@@ -183,6 +207,8 @@ create index if not exists idx_itinerary_trip      on public.itinerary_items(tri
 create index if not exists idx_expenses_trip       on public.expenses(trip_id);
 create index if not exists idx_splits_expense      on public.expense_splits(expense_id);
 create index if not exists idx_packing_trip        on public.packing_items(trip_id);
+create index if not exists idx_memos_trip          on public.memos(trip_id);
+create index if not exists idx_memo_comments_memo  on public.memo_comments(memo_id);
 
 -- -----------------------------------------------------------------------------
 -- 輔助函式
@@ -421,6 +447,8 @@ alter table public.itinerary_items enable row level security;
 alter table public.expenses        enable row level security;
 alter table public.expense_splits  enable row level security;
 alter table public.packing_items   enable row level security;
+alter table public.memos           enable row level security;
+alter table public.memo_comments   enable row level security;
 alter table public.fx_cache        enable row level security;
 
 -- profiles：本人可讀自己；管理員可讀全部（列成員帳號用）。
@@ -533,6 +561,47 @@ create policy packing_all on public.packing_items for all
   to authenticated
   using (private.is_trip_editor(trip_id)) with check (private.is_trip_editor(trip_id));
 
+-- memos：成員/admin 可讀；可編輯成員可寫（比照行程與記帳）。
+drop policy if exists memos_select on public.memos;
+create policy memos_select on public.memos for select
+  to authenticated
+  using (private.is_trip_member(trip_id) or private.is_admin());
+drop policy if exists memos_all on public.memos;
+create policy memos_all on public.memos for all
+  to authenticated
+  using (private.is_trip_editor(trip_id)) with check (private.is_trip_editor(trip_id));
+
+-- memo_comments：留言是討論用的，所以**唯讀成員也能發**（用 is_trip_member 而非 is_trip_editor），
+-- 但只能以自己的成員身分留言；刪改限作者本人或行程管理員。
+drop policy if exists memo_comments_select on public.memo_comments;
+create policy memo_comments_select on public.memo_comments for select
+  to authenticated
+  using (private.is_trip_member(trip_id) or private.is_admin());
+drop policy if exists memo_comments_insert on public.memo_comments;
+create policy memo_comments_insert on public.memo_comments for insert
+  to authenticated
+  with check (
+    private.is_trip_member(trip_id)
+    and exists (select 1 from public.members m
+                where m.id = member_id and m.trip_id = memo_comments.trip_id
+                  and m.auth_uid = auth.uid())
+  );
+drop policy if exists memo_comments_update on public.memo_comments;
+create policy memo_comments_update on public.memo_comments for update
+  to authenticated
+  using (private.is_trip_admin(trip_id)
+         or exists (select 1 from public.members m
+                    where m.id = member_id and m.auth_uid = auth.uid()))
+  with check (private.is_trip_admin(trip_id)
+         or exists (select 1 from public.members m
+                    where m.id = member_id and m.auth_uid = auth.uid()));
+drop policy if exists memo_comments_delete on public.memo_comments;
+create policy memo_comments_delete on public.memo_comments for delete
+  to authenticated
+  using (private.is_trip_admin(trip_id)
+         or exists (select 1 from public.members m
+                    where m.id = member_id and m.auth_uid = auth.uid()));
+
 -- fx_cache：所有登入者可讀寫（純快取，非機密）。
 -- `to authenticated` 已經表達了原本 auth.role() = 'authenticated' 的意思，不必重複判斷。
 drop policy if exists fx_select on public.fx_cache;
@@ -569,6 +638,19 @@ end $$;
 do $$
 begin
   alter publication supabase_realtime add table public.packing_items;
+exception when duplicate_object then null;
+end $$;
+
+-- 備忘錄同理，各自一個區塊，既有 DB 重跑時才不會被前面的 duplicate_object 擋掉。
+do $$
+begin
+  alter publication supabase_realtime add table public.memos;
+exception when duplicate_object then null;
+end $$;
+
+do $$
+begin
+  alter publication supabase_realtime add table public.memo_comments;
 exception when duplicate_object then null;
 end $$;
 

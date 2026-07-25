@@ -40,8 +40,6 @@ body {
 
 .page { width: min(var(--max), calc(100% - 36px)); margin: 0 auto; }
 .app-main { padding: 28px 0 64px; }
-/* 手機：留空間給底部分頁列 */
-@media (max-width: 899px) { body.in-trip .app-main { padding-bottom: calc(76px + env(safe-area-inset-bottom)); } }
 
 .card {
   background: var(--card);
@@ -285,11 +283,10 @@ select[multiple] option { padding: 5px 8px; border-radius: 8px; }
 .chip-toggle { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: var(--bg-soft); color: var(--muted); border-radius: 999px; padding: 4px 12px 4px 4px; font-weight: 700; cursor: pointer; opacity: .55; }
 .chip-toggle.is-on { opacity: 1; color: var(--ink); border-color: var(--accent); background: #fff; }
 
-/* ---------- 導航：桌機常駐側欄 + 手機底部分頁列 ---------- */
+/* ---------- 導航：桌機常駐側欄 / 手機滑出式抽屜 ---------- */
 .drawer { position: fixed; top: 0; left: 0; z-index: 80; width: 264px; height: 100vh; height: 100dvh; display: none; flex-direction: column; background: var(--bg-soft); border-right: 1px solid var(--line); padding: 18px 14px; padding-bottom: max(18px, env(safe-area-inset-bottom)); overflow-y: auto; }
 .drawer-head { padding: 4px 8px 14px; border-bottom: 1px solid var(--line); margin-bottom: 12px; flex-shrink: 0; }
 .drawer-head .brand { font-size: 16px; }
-#drawerTripTitle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 190px; display: inline-block; vertical-align: bottom; }
 .drawer-nav { display: flex; flex-direction: column; gap: 6px; flex: 1; }
 .nav-item { text-align: left; border: none; background: transparent; color: var(--ink); font-weight: 700; font-size: 15px; padding: 12px 14px; border-radius: var(--radius-sm); cursor: pointer; }
 .nav-item:hover { background: var(--accent-soft); }
@@ -298,20 +295,32 @@ select[multiple] option { padding: 5px 8px; border-radius: 8px; }
 .my-trip.is-current .my-trip-main { border-color: var(--accent); background: var(--accent-soft); }
 .drawer-foot { border-top: 1px solid var(--line); padding-top: 12px; flex-shrink: 0; }
 
-/* 底部分頁列（手機）*/
-.tabbar { display: none; position: fixed; left: 0; right: 0; bottom: 0; z-index: 70; background: rgba(255, 248, 239, .96); backdrop-filter: saturate(140%) blur(12px); -webkit-backdrop-filter: saturate(140%) blur(12px); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); }
-body.in-trip .tabbar { display: flex; }
-.tab-item { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; border: none; background: transparent; color: var(--muted); font-weight: 700; font-size: 11px; padding: 8px 2px 7px; cursor: pointer; }
-.tab-item .tab-ico { font-size: 20px; line-height: 1; }
-.tab-item.is-active { color: var(--accent-dark); }
-.tab-item.is-active .tab-ico { transform: translateY(-1px); }
-.tab-item.is-disabled { opacity: .38; pointer-events: none; }
+/* 側欄裡的行程切換器 */
+.drawer-trip { display: flex; align-items: center; gap: 6px; width: 100%; margin-top: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); font-weight: 700; font-size: 14px; text-align: left; padding: 8px 12px; border-radius: var(--radius-sm); cursor: pointer; }
+.drawer-trip #drawerTripTitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drawer-trip .caret { flex: 0 0 auto; color: var(--muted); font-size: 12px; }
+.drawer-trip[aria-expanded="true"] { border-color: var(--accent); }
+.drawer-trips { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; max-height: 40vh; overflow-y: auto; }
+.drawer-trips .popover-item { font-size: 13px; padding: 8px 10px; }
 
-/* 桌機：常駐側欄，內容整體右移；隱藏底部列 */
+/* 手機：☰ 打開抽屜，遮罩蓋住內容 */
+.nav-toggle { flex: 0 0 auto; display: none; align-items: center; justify-content: center; width: 38px; height: 38px; border: 1px solid var(--line); background: var(--bg-soft); color: var(--ink); font-size: 18px; line-height: 1; border-radius: var(--radius-sm); cursor: pointer; }
+.nav-scrim { position: fixed; inset: 0; z-index: 75; background: rgba(45, 36, 31, .45); }
+
+@media (max-width: 899px) {
+  /* 抽屜平常收在畫面外，body.nav-open 時滑進來 */
+  body.in-trip .drawer { display: flex; transform: translateX(-100%); transition: transform .22s ease; box-shadow: var(--shadow); }
+  body.in-trip.nav-open .drawer { transform: none; }
+  body.in-trip .nav-toggle { display: inline-flex; }
+  /* 行程切換與帳號都搬進抽屜了，頂部不再重複一份 */
+  #tripSwitcher, #accountBtn { display: none !important; }
+}
+
+/* 桌機：常駐側欄，內容整體右移；沒有 ☰ 也沒有遮罩 */
 @media (min-width: 900px) {
   body.in-trip { padding-left: 264px; }
   body.in-trip .drawer { display: flex; }
-  body.in-trip .tabbar { display: none; }
+  .nav-toggle, .nav-scrim { display: none !important; }
   .account-btn { display: none !important; } /* 桌機帳號/登出由側欄 foot 處理；行程切換器仍保留 */
 }
 
@@ -375,6 +384,24 @@ body.in-trip .tabbar { display: flex; }
 .ai-op[data-kind="delete"] .ai-op-txt { color: var(--accent-dark); }
 .ai-ops-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
 
+/* ---------- 備忘錄 ---------- */
+.memo-list { display: flex; flex-direction: column; gap: 14px; margin-top: 12px; }
+.memo-card { background: var(--bg-soft); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 14px 16px; }
+.memo-head { display: flex; align-items: flex-start; gap: 10px; }
+.memo-title { margin: 0; font-size: 16px; flex: 1; min-width: 0; word-break: break-word; }
+.memo-head .btn { flex: 0 0 auto; }
+.memo-meta { margin: 2px 0 0; }
+.memo-body { white-space: pre-wrap; word-break: break-word; margin-top: 8px; }
+.memo-comments { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.memo-comments-head { margin: 0 0 8px; font-size: 13px; color: var(--muted); font-weight: 700; }
+.memo-comment { display: flex; align-items: flex-start; gap: 8px; padding: 6px 0; }
+.memo-comment-body { flex: 1; min-width: 0; word-break: break-word; }
+.memo-comment-body .status { display: block; font-size: 12px; }
+.memo-comment .pill-x { flex: 0 0 auto; }
+.memo-comment-form { display: flex; gap: 8px; margin-top: 8px; }
+.memo-comment-form input { flex: 1; min-width: 0; }
+.memo-comment-form .btn { flex: 0 0 auto; }
+
 /* ---------- 管理頁 ---------- */
 .admin-list { display: flex; flex-direction: column; gap: 10px; }
 .admin-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; background: var(--bg-soft); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 12px 14px; flex-wrap: wrap; }
@@ -409,8 +436,6 @@ body.in-trip .tabbar { display: flex; }
      （exp-body 被壓成一字一行），這裡收回來。記帳是要一眼掃完的清單，
      不像行李適合讓按鈕獨佔一行——說明太長本來就用 .exp-desc 的 ellipsis 截字。 */
   .exp-row .itin-actions { width: auto; }
-  /* 顯示品牌字「旅程規劃」，並壓縮行程切換器寬度讓兩者並存 */
-  .trip-switcher { max-width: 40vw; }
 }
 
 /* ---------- Modal ---------- */
@@ -425,11 +450,11 @@ body.in-trip .tabbar { display: flex; }
 }
 
 /* ---------- Toast ---------- */
-.toast { position: fixed; left: 50%; bottom: calc(84px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 120; background: var(--ink); color: #fff; font-weight: 700; font-size: 14px; padding: 11px 18px; border-radius: 999px; box-shadow: var(--shadow); max-width: calc(100vw - 32px); text-align: center; }
+/* 圓角刻意不用 999px：訊息一長就會被撐成一顆蓋住半個畫面的大圓球。 */
+.toast { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 120; background: var(--ink); color: #fff; font-weight: 700; font-size: 14px; padding: 11px 18px; border-radius: var(--radius-sm); box-shadow: var(--shadow); max-width: min(420px, calc(100vw - 32px)); text-align: center; word-break: break-word; }
 .toast[data-ok="false"] { background: var(--accent-dark); }
 .toast-act { margin-left: 12px; background: transparent; border: 0; color: var(--accent-soft);
   font: inherit; font-weight: 800; text-decoration: underline; cursor: pointer; }
-@media (min-width: 900px) { .toast { bottom: 28px; } }
 
 .feature-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
 .feature-tab { padding: 8px 14px; border-radius: 999px; font-weight: 700; font-size: 13px; }

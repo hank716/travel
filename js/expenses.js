@@ -1,5 +1,5 @@
 // 記帳資料層：支出 + 分帳（CRUD + Realtime）。
-import { supabase } from "@/supabase.js";
+import { supabase, subscribeChannel } from "@/supabase.js";
 
 // 取得支出（含分帳明細）
 export async function listExpenses(tripId) {
@@ -69,14 +69,8 @@ export async function clearExpenses(tripId) {
 }
 
 export function subscribeExpenses(tripId, onChange) {
-  const channel = supabase
-    .channel("exp-" + tripId)
-    .on("postgres_changes",
-      { event: "*", schema: "public", table: "expenses", filter: `trip_id=eq.${tripId}` },
-      onChange)
-    .on("postgres_changes",
-      { event: "*", schema: "public", table: "expense_splits" },
-      onChange)
-    .subscribe();
-  return () => supabase.removeChannel(channel);
+  return subscribeChannel("exp-" + tripId, [
+    { event: "*", schema: "public", table: "expenses", filter: `trip_id=eq.${tripId}` },
+    { event: "*", schema: "public", table: "expense_splits" },
+  ], onChange);
 }

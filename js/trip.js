@@ -1,5 +1,5 @@
 // 行程資料層：建立 / 加入 / 讀取 / 成員 / 啟用幣別 / Realtime。
-import { supabase } from "@/supabase.js";
+import { supabase, subscribeChannel } from "@/supabase.js";
 import { todayStr } from "@/constants.js";
 
 const LS_KEY = "jp-trip-current"; // 記住目前所在行程
@@ -174,14 +174,8 @@ export async function updateBaseCurrency(tripId, base) {
 
 // 訂閱該行程的成員與幣別變動（即時同步），回傳取消訂閱函式
 export function subscribeTrip(tripId, onChange) {
-  const channel = supabase
-    .channel("trip-" + tripId)
-    .on("postgres_changes",
-      { event: "*", schema: "public", table: "members", filter: `trip_id=eq.${tripId}` },
-      onChange)
-    .on("postgres_changes",
-      { event: "*", schema: "public", table: "trip_currencies", filter: `trip_id=eq.${tripId}` },
-      onChange)
-    .subscribe();
-  return () => supabase.removeChannel(channel);
+  return subscribeChannel("trip-" + tripId, [
+    { event: "*", schema: "public", table: "members", filter: `trip_id=eq.${tripId}` },
+    { event: "*", schema: "public", table: "trip_currencies", filter: `trip_id=eq.${tripId}` },
+  ], onChange);
 }

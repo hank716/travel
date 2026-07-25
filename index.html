@@ -5,19 +5,24 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#FFF4E8" />
   <title>旅程規劃 · Trip Planner</title>
-  <link rel="stylesheet" href="./css/app.css?v=20260726h" />
+  <link rel="stylesheet" href="./css/app.css?v=20260726i" />
   <!-- 網站圖示：SVG 優先（向量、深淺色都清楚），ico 給不吃 SVG favicon 的瀏覽器，
        apple-touch-icon 是 iOS「加到主畫面」用的。圖檔會被瀏覽器長期快取，所以一樣帶 ?v=。 -->
-  <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg?v=20260726h" />
-  <link rel="icon" sizes="32x32" href="./assets/favicon.ico?v=20260726h" />
-  <link rel="icon" type="image/png" sizes="192x192" href="./assets/icon-192.png?v=20260726h" />
-  <link rel="apple-touch-icon" href="./assets/apple-touch-icon.png?v=20260726h" />
+  <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg?v=20260726i" />
+  <link rel="icon" sizes="32x32" href="./assets/favicon.ico?v=20260726i" />
+  <link rel="icon" type="image/png" sizes="192x192" href="./assets/icon-192.png?v=20260726i" />
+  <link rel="apple-touch-icon" href="./assets/apple-touch-icon.png?v=20260726i" />
   <meta name="apple-mobile-web-app-title" content="旅程規劃" />
 </head>
 <body>
   <header class="topbar">
     <div class="page topbar-inner">
       <div class="topbar-left">
+        <!-- 手機導航入口：行程切換／分頁／帳號全部收在左側抽屜裡。
+             顯隱純交給 CSS（.nav-toggle 預設 display:none，只有手機且 body.in-trip 才出現），
+             不用 hidden 屬性，否則還要多一段 JS 去拿掉它。 -->
+        <button id="navToggle" class="nav-toggle" type="button" aria-label="選單"
+                aria-controls="drawer" aria-expanded="false">☰</button>
         <div class="brand">🧳 <span>旅程規劃</span></div>
         <button id="tripSwitcher" class="trip-switcher" type="button" hidden aria-haspopup="true">
           <span id="tripSwitcherTitle"></span>
@@ -33,10 +38,17 @@
     </div>
   </header>
 
-  <!-- 桌機常駐側欄（手機改用底部分頁列） -->
+  <!-- 側欄：桌機常駐，手機由 ☰ 滑出（分頁 + 行程切換 + 帳號都在這裡） -->
+  <div id="navScrim" class="nav-scrim" hidden></div>
   <aside id="drawer" class="drawer">
     <div class="drawer-head">
-      <div class="brand">🧳 <span id="drawerTripTitle">旅程規劃</span></div>
+      <div class="brand">🧳 <span>旅程規劃</span></div>
+      <!-- 行程切換：側欄裡直接展開清單（popover 在窄螢幕會被擠爆，抽屜本來就是垂直清單） -->
+      <button id="drawerTripBtn" class="drawer-trip" type="button" hidden aria-expanded="false">
+        <span id="drawerTripTitle"></span>
+        <span class="caret" aria-hidden="true">▾</span>
+      </button>
+      <div id="drawerTripList" class="drawer-trips" hidden></div>
     </div>
     <nav class="drawer-nav">
       <button class="nav-item" data-page="overview" type="button">🏠 總覽</button>
@@ -44,6 +56,7 @@
       <button class="nav-item" data-page="expenses" type="button">💰 記帳</button>
       <button class="nav-item" data-page="weather" type="button">⛅ 天氣</button>
       <button class="nav-item" data-page="packing" type="button">🎒 行李</button>
+      <button class="nav-item" data-page="memo" type="button">📝 備忘</button>
       <button class="nav-item" data-page="admin" type="button" hidden>⚙️ 管理</button>
     </nav>
     <div class="drawer-foot">
@@ -131,7 +144,7 @@
       </div>
     </div>
 
-    <!-- 行程主畫面（4 個分頁，由 drawer 切換） -->
+    <!-- 行程主畫面（分頁由側欄／漢堡選單切換） -->
     <div id="appView" hidden>
 
       <!-- 總覽 -->
@@ -294,6 +307,18 @@
           </div>
           <p class="status">可指派給某成員，或標記「共用」（全體共用品，如證件、雨傘）。</p>
           <div id="packingList" class="packing-list"></div>
+        </div>
+      </section>
+
+      <!-- 備忘錄 -->
+      <section class="view" id="view-memo" hidden>
+        <div class="card">
+          <div class="card-head">
+            <h2 class="card-title">備忘錄</h2>
+            <button id="addMemoBtn" class="btn btn--sm" type="button">＋ 新增筆記</button>
+          </div>
+          <p class="status">記下訂位號碼、要買的伴手禮、待確認事項…；同行的人都可以在每則筆記底下留言討論。</p>
+          <div id="memoList" class="memo-list"></div>
         </div>
       </section>
 
@@ -551,6 +576,34 @@
       </div>
     </div>
 
+    <!-- 新增/編輯備忘錄 Modal -->
+    <div id="memoModal" class="modal" hidden>
+      <div class="modal-box card">
+        <div class="card-head">
+          <h2 id="memoModalTitle" class="card-title">新增筆記</h2>
+          <button id="memoModalClose" class="btn btn--ghost btn--sm" type="button">✕</button>
+        </div>
+        <form id="memoForm" class="form">
+          <input type="hidden" name="id" />
+          <label>標題
+            <input name="title" placeholder="訂位資訊、待辦事項…" maxlength="60" />
+          </label>
+          <label>內容
+            <textarea name="body" rows="6" placeholder="想記什麼都可以…"></textarea>
+          </label>
+          <label class="check-row" style="display:flex; align-items:center; gap:8px; flex-direction:row;">
+            <input name="pinned" type="checkbox" style="width:auto;" />
+            <span>置頂（排在清單最前面）</span>
+          </label>
+          <div class="row" style="justify-content:flex-end;">
+            <button id="memoDeleteBtn" class="btn btn--ghost" type="button" hidden>刪除</button>
+            <button class="btn" type="submit">儲存</button>
+          </div>
+          <p id="memoError" class="status" data-ok="false" hidden></p>
+        </form>
+      </div>
+    </div>
+
     <!-- 指派行程 Modal（管理員） -->
     <div id="assignTripModal" class="modal" hidden>
       <div class="modal-box card">
@@ -672,16 +725,6 @@
     </div>
   </main>
 
-  <!-- 手機底部分頁列 -->
-  <nav id="tabbar" class="tabbar">
-    <button class="tab-item" data-page="overview" type="button"><span class="tab-ico">🏠</span>總覽</button>
-    <button class="tab-item" data-page="itinerary" type="button"><span class="tab-ico">🗺️</span>行程</button>
-    <button class="tab-item" data-page="expenses" type="button"><span class="tab-ico">💰</span>記帳</button>
-    <button class="tab-item" data-page="weather" type="button"><span class="tab-ico">⛅</span>天氣</button>
-    <button class="tab-item" data-page="packing" type="button"><span class="tab-ico">🎒</span>行李</button>
-    <button class="tab-item" data-page="admin" type="button" hidden><span class="tab-ico">⚙️</span>管理</button>
-  </nav>
-
   <div id="toast" class="toast" hidden></div>
 
   <!-- 模組版本表：ES module 的 import 不會繼承 <script src> 的 ?v=，
@@ -690,24 +733,25 @@
   <script type="importmap">
   {
     "imports": {
-      "@/ai.js": "./js/ai.js?v=20260726h",
-      "@/aichat.js": "./js/aichat.js?v=20260726h",
-      "@/auth.js": "./js/auth.js?v=20260726h",
-      "@/constants.js": "./js/constants.js?v=20260726h",
-      "@/expenses.js": "./js/expenses.js?v=20260726h",
-      "@/fx.js": "./js/fx.js?v=20260726h",
-      "@/itinerary.js": "./js/itinerary.js?v=20260726h",
-      "@/packing.js": "./js/packing.js?v=20260726h",
-      "@/settle.js": "./js/settle.js?v=20260726h",
-      "@/supabase.js": "./js/supabase.js?v=20260726h",
-      "@/swipe.js": "./js/swipe.js?v=20260726h",
-      "@/trip.js": "./js/trip.js?v=20260726h",
-      "@/ui.js": "./js/ui.js?v=20260726h",
-      "@/weather.js": "./js/weather.js?v=20260726h"
+      "@/ai.js": "./js/ai.js?v=20260726i",
+      "@/aichat.js": "./js/aichat.js?v=20260726i",
+      "@/auth.js": "./js/auth.js?v=20260726i",
+      "@/constants.js": "./js/constants.js?v=20260726i",
+      "@/expenses.js": "./js/expenses.js?v=20260726i",
+      "@/fx.js": "./js/fx.js?v=20260726i",
+      "@/itinerary.js": "./js/itinerary.js?v=20260726i",
+      "@/memo.js": "./js/memo.js?v=20260726i",
+      "@/packing.js": "./js/packing.js?v=20260726i",
+      "@/settle.js": "./js/settle.js?v=20260726i",
+      "@/supabase.js": "./js/supabase.js?v=20260726i",
+      "@/swipe.js": "./js/swipe.js?v=20260726i",
+      "@/trip.js": "./js/trip.js?v=20260726i",
+      "@/ui.js": "./js/ui.js?v=20260726i",
+      "@/weather.js": "./js/weather.js?v=20260726i"
     }
   }
   </script>
-  <script src="./config.js?v=20260726h"></script>
-  <script type="module" src="./js/app.js?v=20260726h"></script>
+  <script src="./config.js?v=20260726i"></script>
+  <script type="module" src="./js/app.js?v=20260726i"></script>
 </body>
 </html>
