@@ -202,6 +202,33 @@ function districtsPrompt(payload: Record<string, unknown>): string {
   ].join("\n");
 }
 
+// 把地名轉成 Naver 地圖搜得到的韓文。
+// 為什麼要這一步：Naver 只認韓文（以及部分英文）。「濟州國際機場」在 Naver 搜不到，
+// 「제주국제공항」才搜得到 —— 而這個轉換不是逐字翻譯，是要給「當地實際在用的店名/地名」，
+// 所以交給模型比用字典硬翻可靠。
+function naverQueriesPrompt(payload: Record<string, unknown>): string {
+  const items = (payload.items ?? []) as Array<Record<string, unknown>>;
+  const lines = items.map((it) =>
+    `- ref=${it.ref}｜${[it.title, it.location_name, it.map_query].filter(Boolean).join("｜")}`
+  ).join("\n");
+  return [
+    "你是韓國在地嚮導。把下面每個地點轉成『在 Naver 地圖（네이버 지도）能搜到』的韓文名稱。",
+    "",
+    "規則：",
+    "- 韓國的地點：給當地實際在用的韓文正式名稱，例如 濟州國際機場→제주국제공항、城山日出峰→성산일출봉、景福宮→경복궁。",
+    "- 連鎖店/品牌：用韓國通行的寫法，例如 BHC炸雞→BHC치킨、樂天租車→롯데렌터카。若輸入已含分店名（如「BHC치킨 성산점」）請保留分店。",
+    "- 飯店/民宿：優先給韓文名；只有英文名在當地也通用時（部分國際連鎖）才保留英文。",
+    "- 不是韓國的地點：給韓國人在 Naver 上會用的韓文外來語寫法，例如 東京晴空塔→도쿄 스카이트리。",
+    "- 只給地名本身，不要加說明、不要加行政區前綴（除非那是正式名稱的一部分）。",
+    "- 真的判斷不出來就給空字串，不要瞎猜。寧可留空讓前端用原本的地名，也不要給一個搜不到的錯名字。",
+    "",
+    "地點清單：",
+    lines,
+    "",
+    '只輸出 JSON 陣列，格式：[{"ref":"原本的ref","q":"韓文地名"}]，ref 必須與輸入相同。',
+  ].join("\n");
+}
+
 // AI 排行程
 function itineraryPrompt(payload: Record<string, unknown>): string {
   const trip = (payload.trip ?? {}) as { title?: string; start?: string; end?: string };
@@ -436,6 +463,16 @@ serve(async (req) => {
           return json({ areas: asArray(parseJson(text, mode), "areas") });
         } catch {
           return json({ areas: [] });
+        }
+      }
+      case "resolve_naver_queries": {
+        // 跟 resolve_districts 一樣刻意寬容：轉不出韓文就用原本的地名去搜，
+        // 頂多搜不準，不該讓整張地圖卡壞掉。
+        try {
+          const { text } = await gemini(naverQueriesPrompt(payload), { jsonOut: true, maxTokens: 4096, mode });
+          return json({ queries: asArray(parseJson(text, mode), "queries", "items") });
+        } catch {
+          return json({ queries: [] });
         }
       }
       case "suggest_itinerary": {

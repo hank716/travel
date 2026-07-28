@@ -25,8 +25,13 @@ import {
 import { computeBalances, currencyTotals, settleUp, splitEqually } from "@/settle.js";
 import { loadItineraryWeather, loadCityWeather, getWeatherSummaries } from "@/weather.js";
 import { callAI } from "@/ai.js";
-import { escapeHtml, escapeAttr, toast, humanError } from "@/ui.js";
+import { escapeHtml, escapeAttr, toast, humanError, blockEnterSubmit } from "@/ui.js";
 import { openAiChat, closeAiChat, bindAiChat } from "@/aichat.js";
+import {
+  MAP_PROVIDERS, providerOf, openLabel,
+  routeUrl, appUrl, previewMap, resetMap,
+  ensureNaverQueries, forgetNaverQueries,
+} from "@/maps.js";
 import {
   getSavedTrip, saveTrip, clearSavedTrip,
   createTrip, getTrip, getMyMember,
@@ -432,9 +437,8 @@ async function enterTrip(tripId) {
   state.me = await getMyMember(tripId);
   if (my !== enterSeq) return;
   state.mapInit = false;   // 進新行程時重設地圖預設
-  const frame = $("#mapFrame");
-  if (frame) { frame.hidden = true; frame.removeAttribute("src"); }
-  setText("#mapTitle", "點行程項目的「地圖」即可在此顯示");
+  resetMap();              // 兩個容器都清掉：換行程可能連地圖服務都換了
+  forgetNaverQueries();    // 上一趟轉失敗的項目，換趟回來可以再試一次
   state.weatherLoaded = false;
   packCtxCache = null;     // 換行程了，行李 AI 的天氣/行程情境要重抓
   await renderTrip(trip);
@@ -529,10 +533,11 @@ async function renderTrip(trip) {
       (b.onclick = () => onToggleCanEdit(b.dataset.toggleEdit, b.dataset.can === "0")));
   }
 
-  // 幣別
+  // 行程設定：幣別 + 地圖服務
   renderBaseSelect(trip);
   renderCurrencyPills(trip, currencies);
   renderAddCurrency(trip, currencies);
+  renderMapProviderSelect(trip);
 
   // 依編輯權限隱藏/顯示寫入按鈕（唯讀成員只看不改）
   applyPerms();
@@ -550,8 +555,9 @@ function applyPerms() {
   ["#addItemBtn", "#aiItinBtn", "#addExpenseBtn", "#aiExpenseBtn", "#addPackingBtn", "#aiPackingBtn",
    "#addMemoBtn"]
     .forEach((sel) => setHidden(sel, !editable));
-  // 基準幣別下拉：唯讀時停用（保留標籤文字）
+  // 基準幣別 / 地圖服務下拉：唯讀時停用（保留標籤文字）
   const baseSel = $("#baseSelect"); if (baseSel) baseSel.disabled = !editable;
+  const mapSel = $("#mapProviderSelect"); if (mapSel) mapSel.disabled = !editable;
   // 幣別新增列
   const addCur = $("#addCurrencySelect"); if (addCur) { const row = addCur.closest(".add-currency"); if (row) row.hidden = !editable; }
 }
@@ -1090,6 +1096,15 @@ function opWhen(o) {
   return [d, t].filter(Boolean).join(" ") || "未排定";
 }
 
+// map_query 沒有「是否為使用者自訂」的旗標，只能反推：跟地點、標題都不一樣，
+// 就是有人刻意填過（例如 Naver 用的韓文地名）。這種值不能被自動回填蓋掉。
+function customMapQuery(item) {
+  const q = (item?.map_query || "").trim();
+  if (!q) return "";
+  const auto = [item?.location_name, item?.title].map((v) => (v || "").trim());
+  return auto.includes(q) ? "" : q;
+}
+
 // AI 欄位 → 資料庫欄位。空字串轉 null：date/time 欄位吃不下空字串。
 function updatePatch(o) {
   const patch = {};
@@ -1099,9 +1114,13 @@ function updatePatch(o) {
   }
   // 名稱或地點改了，地圖查詢字串要跟著換，否則地圖還指著舊地點
   // （addItem 有 map_query 的 fallback，updateItem 沒有，得自己補）
+  // 但使用者自己填過搜尋字就別動 —— 那是他為了 Naver 特地打的當地語言地名
   if ("title" in o.fields || "location_name" in o.fields) {
-    patch.map_query = o.fields.location_name || o.item.location_name
-      || o.fields.title || o.item.title;
+    if (!customMapQuery(o.item)) {
+      patch.map_query = o.fields.location_name || o.item.location_name
+        || o.fields.title || o.item.title;
+    }
+    patch.naver_query = null;   // 地點變了，舊的韓文快取要作廢重轉
   }
   return patch;
 }
@@ -1372,7 +1391,7 @@ function expCurText(k, item) {
 const EXPENSE_CHAT = {
   title: "✨ AI 記帳",
   hint: "AI 提出的變更會先列成清單，你確認後才會寫入帳目。",
-  placeholder: "說說要記什麼帳…（Enter 送出、Shift+Enter 換行）",
+  placeholder: "說說要記什麼帳…（打完按「送出」）",
   mode: "edit_expenses",
   guard: guardEdit,
   greeting: expenseGreeting,
@@ -1454,6 +1473,35 @@ function renderBaseSelect(trip) {
       if (!cur.includes(sel.value)) await addTripCurrency(trip.id, sel.value);
       renderTrip(trip);
     } catch (err) { toast(humanError(err), false); }
+  };
+}
+
+// 地圖服務跟基準幣別一樣是「這趟行程的設定」，所以放在同一張卡、用同一套寫法。
+// 刻意不放編輯行程 modal —— 那個只有管理頁進得去，一般成員開不了。
+function renderMapProviderSelect(trip) {
+  const sel = $("#mapProviderSelect");
+  if (!sel) return;
+  const cur = providerOf(trip);
+  sel.innerHTML = MAP_PROVIDERS.map(
+    (p) => `<option value="${p.value}" ${p.value === cur ? "selected" : ""}>${escapeHtml(p.label)}</option>`
+  ).join("");
+  setText("#mapProviderHint", cur === "naver"
+    ? "地點會自動轉成韓文再送去 Naver 搜尋（轉一次就存起來）。轉得不準的話，到該項目的「地圖搜尋字」自己填韓文即可覆蓋。"
+    : "去韓國的話改用 Naver，Google Maps 在韓國查不到路線。");
+
+  sel.onchange = async () => {
+    const prev = trip.map_provider;
+    try {
+      await updateTrip(trip.id, { map_provider: sel.value });
+      trip.map_provider = sel.value;
+      state.mapInit = false;   // 換了服務，內嵌預覽要重畫
+      resetMap();
+      renderMapProviderSelect(trip);
+      await renderItinerary(trip);
+    } catch (err) {
+      sel.value = providerOf({ map_provider: prev });
+      toast(humanError(err), false);
+    }
   };
 }
 
@@ -1548,7 +1596,7 @@ async function renderItinerary(trip) {
     list.innerHTML = emptyHtml(
       "還沒有任何項目，點右上角「＋ 新增項目」開始排行程。",
       "這趟還沒有行程項目 —— 請可編輯的夥伴先排。");
-    $("#mapOpen").href = buildMapUrl([]);
+    renderMapLinks(trip, []);
     setHidden("#clearItinBtn", true);
     return;
   }
@@ -1559,8 +1607,9 @@ async function renderItinerary(trip) {
   appendListHint(list);
 
   // 綁定每張卡片的按鈕
+  // 帶 id 而不是查詢字串：Naver 內嵌需要整筆（座標），Google 只用得到字串
   list.querySelectorAll("[data-map]").forEach((b) =>
-    (b.onclick = () => previewMap(b.dataset.map)));
+    (b.onclick = () => previewMap(providerOf(trip), items.find((i) => i.id === b.dataset.map))));
   list.querySelectorAll("[data-edit]").forEach((b) =>
     (b.onclick = () => openItemModal(items.find((i) => i.id === b.dataset.edit))));
 
@@ -1579,15 +1628,22 @@ async function renderItinerary(trip) {
     });
   }
 
-  // 「在 Google Maps 開啟」= 目前顯示日期的整條行程路線
+  // 「在地圖開啟行程」= 目前顯示日期的整條路線
   const shownItems = showKeys.flatMap((k) => groups.get(k) || []);
-  $("#mapOpen").href = buildMapUrl(shownItems);
+  renderMapLinks(trip, shownItems);
 
   // 首次進入時，內嵌地圖預覽第一個有地點的項目（無地點則維持空白提示）
   if (!state.mapInit) {
     const first = items.find((i) => i.map_query || i.location_name);
-    if (first) { previewMap(first.map_query || first.location_name, { silent: true }); state.mapInit = true; }
+    if (first) { previewMap(providerOf(trip), first, { silent: true }); state.mapInit = true; }
   }
+
+  // Naver：把還沒轉過的中文地名批次送去換成韓文。非同步進行，不擋畫面 ——
+  // 轉好之前地圖仍然可以用（用原本的地名搜），轉好之後只要把連結重算一次。
+  // 刻意不呼叫 renderItinerary()：那會再進來這裡，變成無窮迴圈。
+  ensureNaverQueries(providerOf(trip), items).then((changed) => {
+    if (changed && state.trip?.id === trip.id) renderMapLinks(trip, shownItems);
+  });
 }
 
 function renderItemCard(it) {
@@ -1605,7 +1661,7 @@ function renderItemCard(it) {
         ${it.notes ? `<div class="itin-notes">${escapeHtml(it.notes)}</div>` : ""}
       </div>
       <div class="itin-actions">
-        ${q ? `<button class="btn btn--ghost btn--sm" data-map="${escapeAttr(q)}">地圖</button>` : ""}
+        ${q ? `<button class="btn btn--ghost btn--sm" data-map="${it.id}">地圖</button>` : ""}
         <button class="btn btn--ghost btn--sm" data-edit="${it.id}">編輯</button>
       </div>
     </div>`;
@@ -1654,23 +1710,20 @@ async function onSwipeDeleteItem(trip, item) {
 }
 
 // ---------- 地圖 ----------
-// 單點預覽（內嵌 iframe），不影響「在 Google Maps 開啟」的整條路線連結
-function previewMap(query, { silent = false } = {}) {
-  const enc = encodeURIComponent(query);
-  const frame = $("#mapFrame");
-  frame.hidden = false;
-  frame.src = `https://www.google.com/maps?q=${enc}&output=embed`;
-  $("#mapTitle").textContent = query;
-  if (!silent) frame.scrollIntoView({ behavior: "smooth", block: "nearest" });
-}
+// 實作在 js/maps.js（Google / Naver 兩套差很多，抽出去才不會塞爆這裡）。
+// 這裡只負責把「目前這趟用哪家」餵進去。
 
-// 由項目清單組出 Google Maps 連結：多點→路線(dir)、單點→搜尋、無點→Google Maps 首頁
-function buildMapUrl(items) {
-  const pts = items.map((i) => i.map_query || i.location_name).filter(Boolean);
-  if (pts.length === 0) return "https://www.google.com/maps";
-  if (pts.length === 1)
-    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(pts[0])}`;
-  return "https://www.google.com/maps/dir/" + pts.map(encodeURIComponent).join("/");
+// 地圖卡頂端的兩顆連結：整天路線，以及（Naver + 觸控裝置才有的）App 深連結
+function renderMapLinks(trip, shownItems) {
+  const provider = providerOf(trip);
+  const open = $("#mapOpen");
+  open.href = routeUrl(provider, shownItems);
+  open.textContent = openLabel(provider);
+
+  const appBtn = $("#mapOpenApp");
+  const deep = appUrl(provider, shownItems);
+  appBtn.hidden = !deep;
+  if (deep) appBtn.href = deep;
 }
 
 // ---------- 日期欄位（原生日曆 + 自畫的 YYYY-MM-DD） ----------
@@ -1772,7 +1825,10 @@ function openItemModal(item) {
     setTimeValue(f.start_h, f.start_m, item.start_time);
     setTimeValue(f.end_h, f.end_m, item.end_time);
     f.location_name.value = item.location_name || "";
+    f.map_query.value = customMapQuery(item);
     f.notes.value = item.notes || "";
+    // 存檔時比對用：地點沒變就別把 AI 轉好的韓文快取白白丟掉
+    f.dataset.prevQuery = item.map_query || item.location_name || item.title || "";
   } else {
     // 預設日期：目前選的日期，或行程出發日
     f.day_date.value = (state.activeDay && state.activeDay !== "") ? state.activeDay
@@ -1799,7 +1855,13 @@ async function onItemSubmit(e) {
     notes: f.notes.value.trim() || null,
   };
   if (!payload.title) return;
-  payload.map_query = payload.location_name || payload.title;
+  // 使用者填了就用他的（Naver 需要當地語言地名，中文搜不到），沒填才回退
+  payload.map_query = f.map_query.value.trim() || payload.location_name || payload.title;
+  // 地點換了，之前 AI 轉的韓文就是舊地點的，留著地圖會指錯地方
+  if (payload.map_query !== (f.dataset.prevQuery || "")) {
+    payload.naver_query = null;
+    forgetNaverQueries();
+  }
   try {
     setBusy(f, true);
     if (f.id.value) await updateItem(f.id.value, payload);
@@ -2526,7 +2588,7 @@ function packCurText(k, item) {
 const PACKING_CHAT = {
   title: "✨ AI 行李",
   hint: "AI 提出的變更會先列成清單，你確認後才會寫入行李。",
-  placeholder: "說說行李要怎麼整理…（Enter 送出、Shift+Enter 換行）",
+  placeholder: "說說行李要怎麼整理…（打完按「送出」）",
   mode: "edit_packing",
   guard: guardEdit,
   greeting: packingGreeting,
@@ -2740,6 +2802,7 @@ async function onDeleteTrip(id, title) {
 // ---------- 啟動 ----------
 async function boot() {
   show("bootView");
+  blockEnterSubmit();   // 要在其他監聽之前掛，否則攔不到已經冒泡出去的 Enter
   buildJoinView();
   initDatePicks();
 
@@ -2843,9 +2906,6 @@ async function boot() {
     const q = $("#weatherManualInput").value.trim();
     if (q) loadCityWeather(q).catch((e) => toast(humanError(e), false));
   };
-  $("#weatherManualInput").addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); $("#weatherManualBtn").click(); }
-  });
   $("#aiWeatherBtn").onclick = onAiWeather;
 
   // 支出 modal

@@ -40,7 +40,7 @@ export function openAiChat(cfg) {
   $("#aiChatTitle").textContent = cfg.title || "✨ AI 助手";
   $("#aiChatHint").textContent = cfg.hint || "AI 提出的變更會先列成清單，你確認後才會寫入。";
   $("#aiChatInput").value = "";
-  $("#aiChatInput").placeholder = cfg.placeholder || "說說你想怎麼改…（Enter 送出、Shift+Enter 換行）";
+  $("#aiChatInput").placeholder = cfg.placeholder || "說說你想怎麼改…（打完按「送出」）";
   $("#aiChatSend").disabled = false;
 
   const sel = $("#aiChatScope");
@@ -208,9 +208,6 @@ export function bindAiChat() {
   $("#aiChatClose").onclick = closeAiChat;
   $("#aiChatSend").onclick = sendAiChat;
   $("#aiChatScope").onchange = refreshGreeting;
-  // Enter 送出、Shift+Enter 換行
-  $("#aiChatInput").addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendAiChat(); }
-  });
+  // Enter 是換行，送出一律走「送出」鈕（見 ui.js 的 blockEnterSubmit）
   $("#aiChatModal").addEventListener("click", (e) => { if (e.target.id === "aiChatModal") closeAiChat(); });
 }

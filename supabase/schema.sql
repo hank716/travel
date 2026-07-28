@@ -89,6 +89,11 @@ create table if not exists public.trips (
   created_at    timestamptz not null default now()
 );
 
+-- 相容性調整：每趟行程各自選地圖服務。韓國政府限制圖資輸出，Google Maps 在韓國
+-- 沒有步行/大眾運輸路線，所以韓國行程要能改用 Naver。合法值由前端下拉選單保證
+-- （不加 check constraint：alter add constraint 沒有 if not exists，重跑整份會炸）。
+alter table public.trips add column if not exists map_provider text not null default 'google';
+
 create table if not exists public.trip_currencies (
   trip_id uuid not null references public.trips(id) on delete cascade,
   code    text not null,                              -- JPY / TWD / USD ...
@@ -135,6 +140,11 @@ create table if not exists public.itinerary_items (
 -- 相容性調整：天氣用，快取每個項目解析到的行政區（避免重複呼叫 AI）。
 -- 必須放在建表之後——放在前面的話，全新資料庫跑整份會在這行 relation does not exist 中斷。
 alter table public.itinerary_items add column if not exists weather_area text;
+
+-- 相容性調整：Naver 地圖用的韓文地名快取。Naver 搜「濟州國際機場」搜不到，
+-- 得用「제주국제공항」。由 AI 轉一次就存起來，同行夥伴也共用這份結果。
+-- 地點改掉時要一併清成 null，否則地圖會指著舊地點（見 js/app.js 的 clearNaverCache）。
+alter table public.itinerary_items add column if not exists naver_query text;
 
 create table if not exists public.expenses (
   id           uuid primary key default gen_random_uuid(),

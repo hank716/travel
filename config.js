@@ -11,6 +11,11 @@ window.APP_CONFIG = {
   DEFAULT_BASE_CURRENCY: "TWD",
   DEFAULT_CURRENCIES: ["TWD"],
 
+  // Naver 地圖（韓國行程用）的前端金鑰 ncpKeyId。留空 = 只有「在 Naver 地圖開啟」
+  // 的連結，沒有網頁內嵌地圖。這把金鑰可在 Naver Cloud Platform 鎖定網域，
+  // 跟上面的 anon key 同一類，放這裡安全。
+  NAVER_MAP_KEY_ID: "",
+
   // 唯一管理員（寫死）。只有這個 Email 註冊會是 admin；前端也用它擋註冊。
   // 若要更換，記得 supabase/schema.sql 的 handle_new_user 觸發器也要同步改。
   ADMIN_EMAIL: "hank.wang.716@gmail.com",

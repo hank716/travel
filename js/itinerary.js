@@ -30,6 +30,9 @@ export async function addItem(tripId, item, createdBy) {
     category: item.category || null,
     location_name: item.location_name || null,
     map_query: item.map_query || item.location_name || item.title || null,
+    // 一般新增時是 null（之後由 AI 補），但「復原刪除」會把整筆傳回來，
+    // 帶著它才不會每復原一次就再花一次 AI 配額去轉同一個地名
+    naver_query: item.naver_query || null,
     notes: item.notes || null,
     sort_order: item.sort_order ?? 0,
   }).select().single();
