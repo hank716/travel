@@ -41,18 +41,47 @@ export function openLabel(provider) {
 // 韓文（諺文音節 + 字母 + 相容字母）。用來判斷「這個字串 Naver 搜得到嗎」。
 const HANGUL = /[가-힣ᄀ-ᇿ㄰-㆏]/;
 
+// 使用者/AI 常把地名寫成「韓文店名 + 英文地區」的混雜形式（實際遇過「뼈다귀에반하다 Jeju」），
+// 那條英文尾巴會讓 Naver 直接搜不到 —— 它不是店名的一部分，只是拿來標註在哪個地區。
+//
+// 只砍結尾、而且只砍白名單裡的詞。不寫成「刪掉所有純 ASCII 的 token」是因為那會把
+// 「ARTE MUSEUM 제주」砍成「제주」（跑到整座島的中心），也可能動到把英文縮寫黏在
+// 韓文前面的正式店名。
+const REGION_TAIL = /[\s,]+(south\s+korea|korea|jeju(\s*-?\s*(do|island))?|seoul|busan)$/i;
+
+function stripRegionTail(s) {
+  let out = (s || "").trim();
+  // 「… Jeju Korea」這種疊兩層的也要清掉，但設上限免得寫出無窮迴圈
+  for (let i = 0; i < 3; i++) {
+    const next = out.replace(REGION_TAIL, "").trim();
+    if (!next || next === out) break;
+    out = next;
+  }
+  return out;
+}
+
+// 獨立成詞的純英文單字（黏在韓文上的不算，例如「BHC치킨」的 BHC）
+const LATIN_WORD = /(^|\s)[A-Za-z][A-Za-z.'&-]*(\s|$)/;
+
+// 「這個字串可以原封不動丟給 Naver 嗎」＝ 有韓文，而且沒有夾雜獨立的英文單字。
+// 夾雜英文的（如「ARTE MUSEUM 제주」）交給 AI 轉成在地正式名更準。
+const isKoreanName = (s) => !!s && HANGUL.test(s) && !LATIN_WORD.test(s);
+
 // 項目 → 拿來搜尋的字串。
 // Google 吃中文地名；Naver 只認韓文（「濟州國際機場」搜不到，「제주국제공항」才行），
 // 所以 Naver 有自己一條優先序：
-//   1. map_query 本身就是韓文 —— 使用者/AI 特地填的，最準，優先
+//   1. map_query 清掉地區尾巴後是乾淨的韓文名 —— 使用者/AI 特地填的，最準，優先
 //   2. naver_query —— AI 轉過並快取在 DB 的韓文名
 //   3. 都沒有就先用原地名頂著（搜得不準，但至少開得起來），同時排程去轉
 function queryOf(it, provider) {
   const mq = (it?.map_query || "").trim();
   const fallback = (mq || it?.location_name || it?.title || "").trim();
   if (providerOf({ map_provider: provider }) !== "naver") return fallback;
-  if (HANGUL.test(mq)) return mq;
-  return (it?.naver_query || "").trim() || fallback;
+  const cleaned = stripRegionTail(mq);
+  if (isKoreanName(cleaned)) return cleaned;
+  // 連退回原地名時也先清一次尾巴：naver_query 還沒補上的空窗期，
+  // 用「뼈다귀에반하다」去搜也比「뼈다귀에반하다 Jeju」有機會搜到
+  return (it?.naver_query || "").trim() || stripRegionTail(fallback) || fallback;
 }
 
 // 座標欄位沒填時 DB 回 null，而 Number(null) 是 0、Number.isFinite(0) 是 true ——
@@ -174,8 +203,11 @@ const askedNaver = new Set();
 
 export function forgetNaverQueries() { askedNaver.clear(); }
 
+// 判斷條件是「map_query 不是乾淨的韓文名」而不是「完全沒有韓文」：後者會讓
+// 「ARTE MUSEUM 제주」這種夾雜英文的寫法被當成已經轉好，永遠補不到 naver_query。
 const needsNaver = (it) =>
-  it?.id && !it.naver_query && !HANGUL.test(it.map_query || "") && (it.map_query || it.location_name || it.title);
+  it?.id && !it.naver_query && !isKoreanName(stripRegionTail(it.map_query || ""))
+  && (it.map_query || it.location_name || it.title);
 
 /**
  * 補齊 items 的 naver_query。就地改寫傳進來的物件，並回傳有沒有補到東西

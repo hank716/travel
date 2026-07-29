@@ -40,19 +40,29 @@ const geoCache = new Map();
 let lastSummaries = [];
 
 // 地理編碼（Open-Meteo，免金鑰）
-export async function geocode(query) {
+//
+// countryCode（ISO-3166 alpha-2）不是可有可無的裝飾：這個 API 的地名索引是全球的，
+// 同名地點只按人口/權重排序。實測 geocode("Jeju") 的第一名是**衣索比亞**的 Jeju
+// （8.41667, 39.63333），濟州連前三名都排不進去；帶上 countryCode=KR 才會回 Jeju City。
+// 呼叫端只要知道國家就務必傳，並用回傳的 countryCode 再驗一次（見 resolveEntries）。
+export async function geocode(query, { countryCode = "" } = {}) {
   if (!query) return null;
-  const key = query.trim().toLowerCase();
+  const cc = (countryCode || "").trim().toUpperCase();
+  const key = query.trim().toLowerCase() + "|" + cc;
   if (geoCache.has(key)) return geoCache.get(key);
   let result = null;
   try {
-    const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=1&language=zh&format=json`;
+    const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}`
+      + `&count=1&language=zh&format=json${cc ? `&countryCode=${encodeURIComponent(cc)}` : ""}`;
     const r = await fetch(url);
     const j = await r.json();
     const g = j.results && j.results[0];
     if (g) {
       const admin = g.admin1 && g.admin1 !== g.name ? ` · ${g.admin1}` : "";
-      result = { lat: g.latitude, lon: g.longitude, name: g.name + admin, country: g.country };
+      result = {
+        lat: g.latitude, lon: g.longitude, name: g.name + admin,
+        country: g.country, countryCode: (g.country_code || "").toUpperCase(),
+      };
     }
   } catch { /* ignore */ }
   geoCache.set(key, result);
@@ -155,7 +165,10 @@ async function resolveAreas(days) {
       })),
     });
     const map = {};
-    for (const a of areas || []) if (a && a.date) map[a.date] = { area: a.area || "", geo: a.geo || a.area || "" };
+    for (const a of areas || []) {
+      if (!a || !a.date) continue;
+      map[a.date] = { area: a.area || "", geo: a.geo || a.area || "", cc: (a.cc || "").toUpperCase() };
+    }
     return map;
   } catch {
     return {}; // AI 失敗 → 後面以原始地名回退
@@ -174,16 +187,29 @@ async function resolveEntries(days) {
         // 已快取座標，直接用
         geo = { lat: it.lat, lon: it.lng, name: it.weather_area || it.location_name || dd.query };
       } else {
-        const resolved = areaByDate[dd.date] || null;     // { area, geo } 或 null
+        const resolved = areaByDate[dd.date] || null;     // { area, geo, cc } 或 null
         area = resolved?.area || null;
-        geo = (resolved?.geo ? await geocode(resolved.geo) : null)
-          || (area ? await geocode(area) : null)
-          || await geocode(it.location_name || dd.query)
-          || (it.map_query ? await geocode(it.map_query) : null);
-        // 寫回快取（座標 + 行政區標籤），下次與夥伴都免再呼叫 AI
+        const cc = resolved?.cc || "";
+        const opts = { countryCode: cc };
+        geo = (resolved?.geo ? await geocode(resolved.geo, opts) : null)
+          || (area ? await geocode(area, opts) : null)
+          || await geocode(it.location_name || dd.query, opts)
+          || (it.map_query ? await geocode(it.map_query, opts) : null);
+        // 寫回快取（座標 + 行政區標籤），下次與夥伴都免再呼叫 AI。
+        //
+        // 但 lat/lng 是跟 maps.js 共用的欄位（Naver 路線網址、nmap:// 深連結、內嵌地圖都讀它），
+        // 而這裡的地名是 AI 猜的羅馬拼音、又只取地理編碼的第一名 —— 猜錯的代價不是天氣不準，
+        // 是整條路線被帶到別的國家（真的發生過：AI 回 "Jeju"，寫進去的是衣索比亞的座標）。
+        // 所以只有在確定國家對得上時才寫座標；對不上就只留行政區標籤，
+        // 座標留空讓 maps.js 自己用真正的地名去查，天氣本次仍照常顯示。
+        // 刻意要求「AI 給了國碼」且「地理編碼結果的國家對得上」兩者都成立才寫座標：
+        // 沒有國碼可比對時就是無從驗證，寧可不快取（下次重查一次而已），
+        // 也不要再往共用欄位塞一個沒人檢查過的座標。
         if (geo) {
-          updateItem(it.id, { lat: geo.lat, lng: geo.lon, weather_area: area || geo.name })
-            .catch(() => {});
+          const trusted = !!cc && geo.countryCode === cc;
+          const patch = { weather_area: area || geo.name };
+          if (trusted) { patch.lat = geo.lat; patch.lng = geo.lon; }
+          updateItem(it.id, patch).catch(() => {});
         }
       }
       if (!geo) return { ...dd, error: "找不到地點：" + dd.query };
