@@ -5,16 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#FFF4E8" />
   <title>旅程規劃 · Trip Planner</title>
-  <link rel="stylesheet" href="./css/app.css?v=20260729a" />
+  <link rel="stylesheet" href="./css/app.css?v=20260730a" />
   <!-- 網站圖示：ico 排在最前面，裡面有 16/32/48/64/128/256 六種各自算過的點陣圖，
        分頁列那種 16px 的尺寸靠它才會銳利；SVG 補高解析度場合；
        apple-touch-icon 是 iOS「加到主畫面」用的。圖檔都由 tools/make-icons.py 產生。
        圖檔會被瀏覽器長期快取，所以一樣帶 ?v=。 -->
-  <link rel="icon" sizes="16x16 32x32 48x48 64x64 128x128 256x256" href="./assets/favicon.ico?v=20260729a" />
-  <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg?v=20260729a" />
-  <link rel="icon" type="image/png" sizes="192x192" href="./assets/icon-192.png?v=20260729a" />
-  <link rel="icon" type="image/png" sizes="512x512" href="./assets/icon-512.png?v=20260729a" />
-  <link rel="apple-touch-icon" href="./assets/apple-touch-icon.png?v=20260729a" />
+  <link rel="icon" sizes="16x16 32x32 48x48 64x64 128x128 256x256" href="./assets/favicon.ico?v=20260730a" />
+  <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg?v=20260730a" />
+  <link rel="icon" type="image/png" sizes="192x192" href="./assets/icon-192.png?v=20260730a" />
+  <link rel="icon" type="image/png" sizes="512x512" href="./assets/icon-512.png?v=20260730a" />
+  <link rel="apple-touch-icon" href="./assets/apple-touch-icon.png?v=20260730a" />
   <meta name="apple-mobile-web-app-title" content="旅程規劃" />
 </head>
 <body>
@@ -250,20 +250,18 @@
           <div id="itineraryList" class="itinerary-list"></div>
         </div>
 
-        <div class="card">
+        <!-- 只有 Google 有這張卡。Naver 不能 iframe（X-Frame-Options），內嵌得靠官方
+             JS SDK 加上申請不到的 ncpKeyId，所以 Naver 改成逐點跳出去開，整張卡隱藏。 -->
+        <div class="card" id="mapCard" hidden>
           <div class="card-head">
             <h2 class="card-title">地圖</h2>
             <div style="display:flex; gap:8px; flex-wrap:wrap;">
-              <!-- 只有 Naver 且在觸控裝置上才出現：韓國人幾乎都用 Naver App -->
-              <a id="mapOpenApp" class="btn btn--ghost btn--sm" href="#" hidden>用 Naver App 開啟</a>
               <a id="mapOpen" class="btn btn--ghost btn--sm" target="_blank" rel="noopener"
                  href="https://www.google.com/maps">在地圖開啟行程</a>
             </div>
           </div>
           <div id="mapTitle" class="status" style="margin-bottom:8px;">點行程項目的「地圖」即可在此顯示</div>
           <iframe id="mapFrame" class="map-frame" loading="lazy" referrerpolicy="no-referrer-when-downgrade" hidden></iframe>
-          <!-- Naver 不能 iframe（X-Frame-Options），內嵌得靠官方 JS SDK 畫進這個 div -->
-          <div id="mapCanvas" class="map-frame" hidden></div>
         </div>
       </section>
 
@@ -386,7 +384,7 @@
             </div></div>
             <div class="admin-row"><div class="admin-row-main">
               <strong>🗺️ 行程</strong>
-              <span class="status">依日期分頁的行程項目。每筆可以填時間、分類、地點與備註；按項目上的「地圖」會把地點帶進下方的地圖（Google 或 Naver，在總覽的行程設定選）。<strong>地點欄位同時餵給天氣頁</strong>，填了才有天氣看。</span>
+              <span class="status">依日期分頁的行程項目。每筆可以填時間、分類、地點與備註；按項目上的「地圖」，Google 行程會把地點帶進下方的地圖，Naver 行程則直接跳去 Naver（手機優先開 App）—— 用哪一家在總覽的行程設定選。<strong>地點欄位同時餵給天氣頁</strong>，填了才有天氣看。</span>
             </div></div>
             <div class="admin-row"><div class="admin-row-main">
               <strong>💰 記帳</strong>
@@ -413,8 +411,8 @@
             <li><strong>點一整列就能編輯</strong> —— 行程項目、支出、行李、筆記都是，不用另外找編輯鈕。</li>
             <li><strong>往左滑可以刪除</strong>（手機）—— 行程、記帳、行李的列往左滑會露出紅色刪除鈕。不想滑的話，點開該列，編輯視窗裡也有刪除。</li>
             <li><strong>總覽的三個統計數字可以點</strong> —— 直接跳到行程頁、記帳頁，或捲到成員清單。</li>
-            <li><strong>行程項目的「地圖」鈕</strong> —— 把該地點帶進行程頁下方的地圖；右上角「在地圖開啟行程」則會把整天串成一條路線。</li>
-            <li><strong>韓國行程改用 Naver 地圖</strong> —— 在總覽的行程設定切換。Google Maps 在韓國沒有步行與大眾運輸路線。切過去之後，項目的「地圖搜尋字」建議填韓文（例如 경복궁），中文地名 Naver 搜不到。</li>
+            <li><strong>行程項目的「地圖」鈕</strong> —— Google 行程會把該地點帶進行程頁下方的地圖，右上角「在地圖開啟行程」還能把整天串成一條路線。</li>
+            <li><strong>韓國行程改用 Naver 地圖</strong> —— 在總覽的行程設定切換。Google Maps 在韓國沒有步行與大眾運輸路線。Naver 不給內嵌，所以切過去之後沒有下方那張地圖卡，改成點項目的「地圖 ↗」直接跳去 Naver（手機優先開 Naver App）。地點會自動轉成韓文；轉不準的話，項目的「地圖搜尋字」自己填韓文（例如 경복궁）即可覆蓋。</li>
             <li><strong>打字時按 Enter 不會送出</strong> —— 一律用「儲存」／「送出」鈕，才不會打到一半誤存。只有登入頁保留 Enter 送出。</li>
             <li><strong>唯讀成員也能留言</strong> —— 在備忘錄的筆記底下。</li>
           </ul>
@@ -892,26 +890,26 @@
   <script type="importmap">
   {
     "imports": {
-      "@/ai.js": "./js/ai.js?v=20260729a",
-      "@/aichat.js": "./js/aichat.js?v=20260729a",
-      "@/auth.js": "./js/auth.js?v=20260729a",
-      "@/constants.js": "./js/constants.js?v=20260729a",
-      "@/expenses.js": "./js/expenses.js?v=20260729a",
-      "@/fx.js": "./js/fx.js?v=20260729a",
-      "@/itinerary.js": "./js/itinerary.js?v=20260729a",
-      "@/maps.js": "./js/maps.js?v=20260729a",
-      "@/memo.js": "./js/memo.js?v=20260729a",
-      "@/packing.js": "./js/packing.js?v=20260729a",
-      "@/settle.js": "./js/settle.js?v=20260729a",
-      "@/supabase.js": "./js/supabase.js?v=20260729a",
-      "@/swipe.js": "./js/swipe.js?v=20260729a",
-      "@/trip.js": "./js/trip.js?v=20260729a",
-      "@/ui.js": "./js/ui.js?v=20260729a",
-      "@/weather.js": "./js/weather.js?v=20260729a"
+      "@/ai.js": "./js/ai.js?v=20260730a",
+      "@/aichat.js": "./js/aichat.js?v=20260730a",
+      "@/auth.js": "./js/auth.js?v=20260730a",
+      "@/constants.js": "./js/constants.js?v=20260730a",
+      "@/expenses.js": "./js/expenses.js?v=20260730a",
+      "@/fx.js": "./js/fx.js?v=20260730a",
+      "@/itinerary.js": "./js/itinerary.js?v=20260730a",
+      "@/maps.js": "./js/maps.js?v=20260730a",
+      "@/memo.js": "./js/memo.js?v=20260730a",
+      "@/packing.js": "./js/packing.js?v=20260730a",
+      "@/settle.js": "./js/settle.js?v=20260730a",
+      "@/supabase.js": "./js/supabase.js?v=20260730a",
+      "@/swipe.js": "./js/swipe.js?v=20260730a",
+      "@/trip.js": "./js/trip.js?v=20260730a",
+      "@/ui.js": "./js/ui.js?v=20260730a",
+      "@/weather.js": "./js/weather.js?v=20260730a"
     }
   }
   </script>
-  <script src="./config.js?v=20260729a"></script>
-  <script type="module" src="./js/app.js?v=20260729a"></script>
+  <script src="./config.js?v=20260730a"></script>
+  <script type="module" src="./js/app.js?v=20260730a"></script>
 </body>
 </html>

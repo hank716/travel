@@ -25,11 +25,11 @@ import {
 import { computeBalances, currencyTotals, settleUp, splitEqually } from "@/settle.js";
 import { loadItineraryWeather, loadCityWeather, getWeatherSummaries } from "@/weather.js";
 import { callAI } from "@/ai.js";
-import { escapeHtml, escapeAttr, toast, humanError, blockEnterSubmit } from "@/ui.js";
+import { escapeHtml, escapeAttr, toast, humanError, blockEnterSubmit, hasTextSelectionIn } from "@/ui.js";
 import { openAiChat, closeAiChat, bindAiChat } from "@/aichat.js";
 import {
-  MAP_PROVIDERS, providerOf, openLabel,
-  routeUrl, appUrl, previewMap, resetMap,
+  MAP_PROVIDERS, providerOf, openLabel, hasEmbed,
+  routeUrl, itemMapUrl, itemAppUrl, previewMap, resetMap,
   ensureNaverQueries, forgetNaverQueries,
 } from "@/maps.js";
 import {
@@ -80,7 +80,9 @@ function emptyHtml(editableMsg, readonlyMsg) {
 
 // 清單底下的操作提示。「點一列可編輯」和「左滑刪除」都沒有任何視覺線索，
 // 第一次用的人只會以為列表是唯讀的。只在有資料且可編輯時附上（沒資料時空狀態已經在講話）。
-const LIST_HINT = `<p class="status list-hint">點一列可以編輯，往左滑可以刪除。</p>`;
+// 左滑刻意只在觸控裝置生效（滑鼠橫拖要留給選字），所以提示也講清楚是手機 ——
+// 桌機的人照著滑不動會以為壞了。桌機刪除走編輯視窗裡的刪除鈕。
+const LIST_HINT = `<p class="status list-hint">點一列可以編輯；手機往左滑可以刪除。</p>`;
 function appendListHint(el) {
   if (canEdit()) el.insertAdjacentHTML("beforeend", LIST_HINT);
 }
@@ -437,7 +439,7 @@ async function enterTrip(tripId) {
   state.me = await getMyMember(tripId);
   if (my !== enterSeq) return;
   state.mapInit = false;   // 進新行程時重設地圖預設
-  resetMap();              // 兩個容器都清掉：換行程可能連地圖服務都換了
+  resetMap();              // 內嵌地圖清掉：換行程可能連地圖服務都換了
   forgetNaverQueries();    // 上一趟轉失敗的項目，換趟回來可以再試一次
   state.weatherLoaded = false;
   packCtxCache = null;     // 換行程了，行李 AI 的天氣/行程情境要重抓
@@ -1486,7 +1488,7 @@ function renderMapProviderSelect(trip) {
     (p) => `<option value="${p.value}" ${p.value === cur ? "selected" : ""}>${escapeHtml(p.label)}</option>`
   ).join("");
   setText("#mapProviderHint", cur === "naver"
-    ? "地點會自動轉成韓文再送去 Naver 搜尋（轉一次就存起來）。轉得不準的話，到該項目的「地圖搜尋字」自己填韓文即可覆蓋。"
+    ? "Naver 不能內嵌在網頁裡，所以點項目的「地圖」會直接跳去 Naver（手機優先開 App）。地點會自動轉成韓文再拿去搜（轉一次就存起來）；轉得不準的話，到該項目的「地圖搜尋字」自己填韓文即可覆蓋。"
     : "去韓國的話改用 Naver，Google Maps 在韓國查不到路線。");
 
   sel.onchange = async () => {
@@ -1563,6 +1565,9 @@ function dayLabel(d) {
 
 async function renderItinerary(trip) {
   const items = await listItems(trip.id);
+  const provider = providerOf(trip);
+  // Naver 沒有內嵌地圖（申請不到金鑰），整張地圖卡收起來，改成每個項目自己跳出去開
+  setHidden("#mapCard", !hasEmbed(provider));
 
   // 依日期分組
   const groups = new Map();
@@ -1602,14 +1607,13 @@ async function renderItinerary(trip) {
   }
   list.innerHTML = showKeys.map((k) => `
     ${dayKeys.length > 1 ? "" : `<h3 class="day-head">${dayLabel(k)}</h3>`}
-    ${groups.get(k).map(renderItemCard).join("")}
+    ${groups.get(k).map((it) => renderItemCard(it, provider)).join("")}
   `).join("");
   appendListHint(list);
 
   // 綁定每張卡片的按鈕
-  // 帶 id 而不是查詢字串：Naver 內嵌需要整筆（座標），Google 只用得到字串
-  list.querySelectorAll("[data-map]").forEach((b) =>
-    (b.onclick = () => previewMap(providerOf(trip), items.find((i) => i.id === b.dataset.map))));
+  // 帶 id 而不是查詢字串：Naver 的深連結需要整筆（座標），Google 只用得到字串
+  bindItemMapButtons(list, provider, items);
   list.querySelectorAll("[data-edit]").forEach((b) =>
     (b.onclick = () => openItemModal(items.find((i) => i.id === b.dataset.edit))));
 
@@ -1633,20 +1637,22 @@ async function renderItinerary(trip) {
   renderMapLinks(trip, shownItems);
 
   // 首次進入時，內嵌地圖預覽第一個有地點的項目（無地點則維持空白提示）
-  if (!state.mapInit) {
+  if (hasEmbed(provider) && !state.mapInit) {
     const first = items.find((i) => i.map_query || i.location_name);
-    if (first) { previewMap(providerOf(trip), first, { silent: true }); state.mapInit = true; }
+    if (first) { previewMap(provider, first, { silent: true }); state.mapInit = true; }
   }
 
   // Naver：把還沒轉過的中文地名批次送去換成韓文。非同步進行，不擋畫面 ——
   // 轉好之前地圖仍然可以用（用原本的地名搜），轉好之後只要把連結重算一次。
   // 刻意不呼叫 renderItinerary()：那會再進來這裡，變成無窮迴圈。
-  ensureNaverQueries(providerOf(trip), items).then((changed) => {
-    if (changed && state.trip?.id === trip.id) renderMapLinks(trip, shownItems);
+  ensureNaverQueries(provider, items).then((changed) => {
+    if (!changed || state.trip?.id !== trip.id) return;
+    renderMapLinks(trip, shownItems);
+    refreshItemMapLinks(list, provider, items);
   });
 }
 
-function renderItemCard(it) {
+function renderItemCard(it, provider) {
   const time = it.start_time
     ? it.start_time.slice(0, 5) + (it.end_time ? "–" + it.end_time.slice(0, 5) : "")
     : "";
@@ -1661,10 +1667,54 @@ function renderItemCard(it) {
         ${it.notes ? `<div class="itin-notes">${escapeHtml(it.notes)}</div>` : ""}
       </div>
       <div class="itin-actions">
-        ${q ? `<button class="btn btn--ghost btn--sm" data-map="${it.id}">地圖</button>` : ""}
+        ${q ? mapBtnHtml(it, provider) : ""}
         <button class="btn btn--ghost btn--sm" data-edit="${it.id}">編輯</button>
       </div>
     </div>`;
+}
+
+// Google 會把地點畫進下面的地圖卡，所以是一顆按鈕；Naver 沒有內嵌，一律跳出去開，
+// 那就該是一條真的連結 —— 桌機才有中鍵開新分頁、手機才有長按選單。
+function mapBtnHtml(it, provider) {
+  if (hasEmbed(provider)) {
+    return `<button class="btn btn--ghost btn--sm" data-map="${it.id}">地圖</button>`;
+  }
+  return `<a class="btn btn--ghost btn--sm" data-map="${it.id}" target="_blank" rel="noopener"
+             href="${escapeAttr(itemMapUrl(provider, it))}">地圖 ↗</a>`;
+}
+
+function bindItemMapButtons(list, provider, items) {
+  list.querySelectorAll("[data-map]").forEach((b) => {
+    const it = items.find((i) => i.id === b.dataset.map);
+    if (!it) return;
+    if (hasEmbed(provider)) { b.onclick = () => previewMap(provider, it); return; }
+
+    // 觸控裝置才攔截：優先叫起 Naver App（韓國網頁版體驗差很多）。沒裝 App 的人
+    // 畫面會停在原地，所以同時給一條「改用網頁版」的退路 —— 比去猜 visibilitychange
+    // 那種不可靠的偵測誠實。桌機（itemAppUrl 回 null）就讓原生 <a> 自己開新分頁。
+    b.onclick = (e) => {
+      // 在 click 當下才算深連結：韓文名是非同步補的，綁定當時可能還沒到
+      const deep = itemAppUrl(provider, it);
+      if (!deep) return;
+      e.preventDefault();
+      const web = b.href;
+      location.href = deep;
+      toast("正在開 Naver App…", true, {
+        label: "改用網頁版",
+        run: () => window.open(web, "_blank", "noopener"),
+      });
+    };
+  });
+}
+
+// ensureNaverQueries 是非同步補韓文名的，補到之後只要換掉連結上的 href 就好。
+// 不重畫整個清單：renderItinerary 會再跑一次 ensureNaverQueries，變成無窮迴圈。
+function refreshItemMapLinks(list, provider, items) {
+  if (hasEmbed(provider)) return;
+  list.querySelectorAll("a[data-map]").forEach((a) => {
+    const it = items.find((i) => i.id === a.dataset.map);
+    if (it) a.href = itemMapUrl(provider, it);
+  });
 }
 
 // 一鍵清空：多天時給「這天 / 全部」兩個範圍，單天就只有「全部」
@@ -1713,17 +1763,14 @@ async function onSwipeDeleteItem(trip, item) {
 // 實作在 js/maps.js（Google / Naver 兩套差很多，抽出去才不會塞爆這裡）。
 // 這裡只負責把「目前這趟用哪家」餵進去。
 
-// 地圖卡頂端的兩顆連結：整天路線，以及（Naver + 觸控裝置才有的）App 深連結
+// 地圖卡頂端的「整天路線」連結。只有 Google 有這張卡（Naver 是逐點跳轉），
+// 所以其他家直接跳過，不必去動已經隱藏的 DOM。
 function renderMapLinks(trip, shownItems) {
   const provider = providerOf(trip);
+  if (!hasEmbed(provider)) return;
   const open = $("#mapOpen");
   open.href = routeUrl(provider, shownItems);
   open.textContent = openLabel(provider);
-
-  const appBtn = $("#mapOpenApp");
-  const deep = appUrl(provider, shownItems);
-  appBtn.hidden = !deep;
-  if (deep) appBtn.href = deep;
 }
 
 // ---------- 日期欄位（原生日曆 + 自畫的 YYYY-MM-DD） ----------
@@ -1917,6 +1964,8 @@ async function renderExpenses(trip) {
     appendListHint(list);
     list.querySelectorAll("[data-exp-edit]").forEach((b) => (b.onclick = (ev) => {
       ev.stopPropagation();   // 卡片本身也可點；別讓外層再開一次
+      // 整列都可點，但整列也都是可以反白的文字：剛選完字放開滑鼠不該跳出編輯視窗
+      if (hasTextSelectionIn(b)) return;
       openExpenseModal(expenses.find((x) => x.id === b.dataset.expEdit));
     }));
     if (canEdit()) {

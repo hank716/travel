@@ -1,5 +1,7 @@
 // 左滑刪除：把清單裡的每一列包一層，向左拖曳露出紅色刪除鈕。
 // 三個清單（行程項目 / 記帳支出 / 行李物品）共用，純 DOM，不認識任何資料層。
+import { hasTextSelectionIn } from "@/ui.js";
+
 const ACTION_W = 88;   // 紅鈕寬度，要和 css 的 .swipe-del 一致
 const LOCK_PX = 10;    // 超過這距離才判定是橫向手勢（以下都還給瀏覽器捲動）
 const OPEN_PX = 35;    // 放手時滑超過這距離就吸附成開啟
@@ -81,6 +83,12 @@ function wrapRow(row, label, onDelete) {
 
   wrap.addEventListener("pointerdown", (e) => {
     if (e.target.closest(".swipe-del")) return;
+    // 滑鼠一概不觸發左滑：橫向拖曳在桌機的意思是「選字」，被我們攔下來就變成
+    // 反白不了、複製不了。桌機要刪除還有編輯視窗裡的刪除鈕（四個清單都有），
+    // 說明頁寫的也是「往左滑可以刪除（手機）」。
+    if (e.pointerType === "mouse") return;
+    // 已經有選取範圍落在這一列：使用者正在拖兩側的把手調整選字範圍，別搶
+    if (hasTextSelectionIn(wrap)) return;
     active = true; locked = false; swiped = false;
     startX = e.clientX; startY = e.clientY;
     baseX = wrap.classList.contains("is-open") ? -ACTION_W : 0;
@@ -94,6 +102,9 @@ function wrapRow(row, label, onDelete) {
     if (!locked) {
       // 直向為主 → 讓瀏覽器捲動，這輪不再攔
       if (Math.abs(dy) > LOCK_PX && Math.abs(dy) > Math.abs(dx)) { active = false; return; }
+      // 往右拖只有「收回已滑開的那列」這一種意義；列還沒滑開就往右拖，
+      // 那是在選字（或想捲動），放給瀏覽器處理
+      if (dx > 0 && !wrap.classList.contains("is-open")) { active = false; return; }
       if (Math.abs(dx) < LOCK_PX) return;
       locked = true; swiped = true;
       wrap.classList.add("is-dragging");

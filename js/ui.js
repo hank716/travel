@@ -58,6 +58,16 @@ export function blockEnterSubmit() {
   }, true);
 }
 
+// 「使用者剛剛在 el 裡面反白了字嗎」。
+// 清單那幾列同時是「可點的」也是「可選字的」：整列可點的記帳列，選完字放開滑鼠
+// 會直接跳出編輯 modal；左滑刪除也會把選字的拖曳動作吃掉。兩邊都拿這個當煞車。
+export function hasTextSelectionIn(el) {
+  const sel = window.getSelection?.();
+  if (!sel || sel.isCollapsed || !sel.rangeCount || !el) return false;
+  // 用 anchor/focus 兩端判斷就夠：跨列選取時只要有一端在這列裡就算數
+  return el.contains(sel.anchorNode) || el.contains(sel.focusNode);
+}
+
 export function humanError(err) {
   const m = err?.message || String(err);
   if (/code taken/i.test(m)) return "這個行程碼已被使用，換一個吧。";

@@ -5,16 +5,15 @@
 // 網域就好：
 //
 //   Google  免金鑰的 iframe embed，只吃地名字串，多點路線一條網址就搞定
-//   Naver   不能 iframe（X-Frame-Options），路線網址要座標不吃地名，
-//           內嵌地圖得載官方 JS SDK 並附上 ncpKeyId
+//   Naver   不能 iframe（X-Frame-Options），內嵌只能靠官方 JS SDK，而那個
+//           ncpKeyId 我們申請不到 —— 所以 Naver 一律「跳出去開」，不內嵌
 //
-// 所以這裡的介面刻意收在「連結」與「畫進容器」兩件事上，讓 app.js 不必知道
-// 上面那些差異。沒有金鑰時 Naver 自動退回純連結模式，不會壞。
+// 因此兩家的互動模式本來就不一樣，這層把差異收成三件事讓 app.js 去問：
+// 能不能內嵌（hasEmbed）、單一項目要跳去哪（itemMapUrl / itemAppUrl）、
+// 以及 Google 專用的整天路線與內嵌預覽。
 
-import { geocode } from "@/weather.js";
 import { updateItem } from "@/itinerary.js";
 import { callAI } from "@/ai.js";
-import { escapeHtml, toast } from "@/ui.js";
 
 const $ = (s) => document.querySelector(s);
 
@@ -30,6 +29,12 @@ const VALID = new Set(MAP_PROVIDERS.map((p) => p.value));
 export function providerOf(trip) {
   const p = trip?.map_provider;
   return VALID.has(p) ? p : DEFAULT_PROVIDER;
+}
+
+// 「這家能不能畫在頁面裡」—— 只有 Google 可以。app.js 用這個決定要不要顯示地圖卡，
+// 是全專案唯一一處定義內嵌能力的地方。
+export function hasEmbed(provider) {
+  return providerOf({ map_provider: provider }) === "google";
 }
 
 export function openLabel(provider) {
@@ -85,7 +90,7 @@ function queryOf(it, provider) {
 }
 
 // 座標欄位沒填時 DB 回 null，而 Number(null) 是 0、Number.isFinite(0) 是 true ——
-// 直接 Number() 會把「沒座標」當成「在幾內亞灣外海」，路線網址就組出一條錯的。
+// 直接 Number() 會把「沒座標」當成「在幾內亞灣外海」，深連結就指到錯的地方。
 const num = (v) => (v === null || v === undefined || v === "" ? NaN : Number(v));
 const hasCoords = (it) => Number.isFinite(num(it?.lat)) && Number.isFinite(num(it?.lng));
 
@@ -98,97 +103,61 @@ export function searchUrl(provider, query) {
   return `https://www.google.com/maps/search/?api=1&query=${enc}`;
 }
 
-// ---------- 整天路線連結 ----------
+// 單一行程項目要跳去的網頁地圖網址。Naver 會自動吃到 queryOf 轉好的韓文名。
+export function itemMapUrl(provider, item) {
+  const p = providerOf({ map_provider: provider });
+  const q = typeof item === "string" ? item : queryOf(item, p);
+  return searchUrl(p, q);
+}
+
+// ---------- 手機 App 深連結 ----------
+// 韓國人幾乎都用 Naver 的 App，網頁版體驗差很多。桌機開 nmap:// 只會跳出
+// 「找不到應用程式」，所以只在觸控裝置回傳網址，其餘一律 null（呼叫端就走網頁）。
+export function itemAppUrl(provider, item) {
+  if (providerOf({ map_provider: provider }) !== "naver") return null;
+  if (!window.matchMedia?.("(pointer: coarse)")?.matches) return null;
+
+  const q = encodeURIComponent(queryOf(item, "naver"));
+  if (!q) return null;
+  const app = encodeURIComponent(location.hostname || "trip-planner");
+  // 有座標就直接指到那個點，比用名字搜可靠（同名店家在韓國很多）
+  if (hasCoords(item)) {
+    return `nmap://place?lat=${num(item.lat)}&lng=${num(item.lng)}&name=${q}&appname=${app}`;
+  }
+  return `nmap://search?query=${q}&appname=${app}`;
+}
+
+// ---------- 整天路線連結（只有 Google）----------
+// Naver 的網頁版路線網址官方沒有文件，而且要首尾座標才組得出來；既然 Naver 現在
+// 是逐點跳轉、連地圖卡都不顯示，這裡就只服務 Google。
 // items = 目前顯示的行程項目（itinerary rows）
 export function routeUrl(provider, items) {
   const p = providerOf({ map_provider: provider });
-  const list = (items || []).filter((i) => queryOf(i, p));
-  if (p === "naver") return naverRouteUrl(list);
+  if (p !== "google") return "https://map.naver.com/";
 
   // 注意不能寫成 list.map(queryOf)：map 會把索引當成第二個參數餵進 provider
-  const pts = list.map((i) => queryOf(i, p));
+  const pts = (items || []).map((i) => queryOf(i, p)).filter(Boolean);
   if (pts.length === 0) return "https://www.google.com/maps";
   if (pts.length === 1) return searchUrl("google", pts[0]);
   return "https://www.google.com/maps/dir/" + pts.map(encodeURIComponent).join("/");
 }
 
-// Naver 的網頁版路線網址官方沒有文件（NCP 只公開 nmap:// 那套），這裡的格式是
-// 從實際站台觀察來的，隨時可能變。所以只在「首尾都有座標」時才組，其餘一律
-// 退回單點搜尋 —— 格式哪天失效，最糟也只是變成搜尋，鈕不會壞掉。
-function naverRouteUrl(list) {
-  if (list.length === 0) return "https://map.naver.com/";
-  if (list.length === 1) return searchUrl("naver", queryOf(list[0], "naver"));
-
-  const s = list[0];
-  const g = list[list.length - 1];
-  if (!hasCoords(s) || !hasCoords(g)) return searchUrl("naver", queryOf(s, "naver"));
-
-  const pt = (it) => `${it.lng},${it.lat},${encodeURIComponent(queryOf(it, "naver"))},,`;
-  return `https://map.naver.com/p/directions/${pt(s)}/${pt(g)}/-/transit`;
-}
-
-// ---------- 手機 App 深連結 ----------
-// 韓國人幾乎都用 Naver 的 App，網頁版體驗差很多。桌機開 nmap:// 只會跳出
-// 「找不到應用程式」，所以只在觸控裝置給這顆鈕。
-export function appUrl(provider, items) {
-  if (providerOf({ map_provider: provider }) !== "naver") return null;
-  if (!window.matchMedia?.("(pointer: coarse)")?.matches) return null;
-
-  const q = (it) => encodeURIComponent(queryOf(it, "naver"));
-  const list = (items || []).filter((i) => queryOf(i, "naver"));
-  const app = encodeURIComponent(location.hostname || "trip-planner");
-  const withXy = list.filter(hasCoords);
-  if (withXy.length >= 2) {
-    const s = withXy[0], g = withXy[withXy.length - 1];
-    return "nmap://route/public?" +
-      `slat=${s.lat}&slng=${s.lng}&sname=${q(s)}` +
-      `&dlat=${g.lat}&dlng=${g.lng}&dname=${q(g)}&appname=${app}`;
-  }
-  if (withXy.length === 1) {
-    const p = withXy[0];
-    return `nmap://place?lat=${p.lat}&lng=${p.lng}&name=${q(p)}&appname=${app}`;
-  }
-  if (list.length) return `nmap://search?query=${q(list[0])}&appname=${app}`;
-  return null;
-}
-
-// ---------- 內嵌預覽 ----------
-// Google 走 iframe（#mapFrame），Naver 走 JS SDK 畫進 div（#mapCanvas）。
-// 每次只顯示其中一個，另一個要確實清掉，否則換行程/換服務會殘留舊圖。
+// ---------- 內嵌預覽（只有 Google）----------
 export async function previewMap(provider, item, { silent = false } = {}) {
   const p = providerOf({ map_provider: provider });
+  if (!hasEmbed(p)) return;
   const query = typeof item === "string" ? item : queryOf(item, p);
   if (!query) return;
-  // 標題給看得懂的中文名；實際拿去搜的字不一樣時（Naver 的韓文）附在後面，
-  // 這樣 AI 轉錯的時候一眼就看得出來，不用去猜為什麼地圖跑到別的地方
+  // 標題給看得懂的中文名；實際拿去搜的字不一樣時附在後面，這樣搜錯的時候
+  // 一眼就看得出來，不用去猜為什麼地圖跑到別的地方
   const display = typeof item === "string" ? item : (item?.location_name || item?.title || query);
   setText("#mapTitle", query === display ? display : `${display}（${query}）`);
 
-  if (p === "google") {
-    clearNaver();
-    const frame = $("#mapFrame");
-    if (!frame) return;
-    frame.hidden = false;
-    frame.src = `https://www.google.com/maps?q=${encodeURIComponent(query)}&output=embed`;
-    if (!silent) frame.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    return;
-  }
-
-  // Naver：先把 Google 的 iframe 收掉，免得兩張圖疊著
-  clearGoogle();
-  const box = $("#mapCanvas");
-  if (!box) return;
-  const it = typeof item === "string" ? { map_query: item } : item;
-  const ok = await renderNaver(box, it, query);
-  if (ok && !silent) box.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  if (!ok) {
-    // 沒金鑰或載入失敗 —— 誠實地退回「開新分頁」的連結，別留一塊空白
-    box.hidden = false;
-    box.classList.add("map-fallback");
-    box.innerHTML = `<p class="status">Naver 地圖不支援網頁內嵌預覽。</p>
-      <a class="btn btn--sm" target="_blank" rel="noopener"
-         href="${escapeHtml(searchUrl("naver", query))}">在 Naver 地圖開啟「${escapeHtml(query)}」</a>`;
-  }
+  const frame = $("#mapFrame");
+  if (!frame) return;
+  frame.hidden = false;
+  frame.src = `https://www.google.com/maps?q=${encodeURIComponent(query)}&output=embed`;
+  if (!silent) frame.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 // ---------- 韓文地名解析 ----------
@@ -245,97 +214,14 @@ export async function ensureNaverQueries(provider, items) {
   return changed;
 }
 
-// 換行程 / 換地圖服務時呼叫：兩個容器都清乾淨
+// 換行程 / 換地圖服務時呼叫
 export function resetMap() {
-  clearGoogle();
-  clearNaver();
-  setText("#mapTitle", "點行程項目的「地圖」即可在此顯示");
-}
-
-function clearGoogle() {
   const frame = $("#mapFrame");
   if (frame) { frame.hidden = true; frame.removeAttribute("src"); }
-}
-
-function clearNaver() {
-  const box = $("#mapCanvas");
-  if (!box) return;
-  box.hidden = true;
-  box.classList.remove("map-fallback");
-  box.innerHTML = "";
-  naverMap = null;   // SDK 的實例綁在被清掉的 DOM 上，留著也沒用
+  setText("#mapTitle", "點行程項目的「地圖」即可在此顯示");
 }
 
 function setText(sel, txt) {
   const el = $(sel);
   if (el) el.textContent = txt;
-}
-
-// ---------- Naver Maps JS API v3 ----------
-// 金鑰是可鎖網域的前端金鑰（跟 Supabase anon key 同一類），放 config.js 安全。
-// 沒設定就整條路徑安靜地退回連結模式，Google 行程完全不受影響。
-let sdkPromise = null;
-let naverMap = null;
-
-function naverKey() {
-  return (window.APP_CONFIG?.NAVER_MAP_KEY_ID || "").trim();
-}
-
-function loadNaverSdk() {
-  if (sdkPromise) return sdkPromise;
-  const key = naverKey();
-  if (!key) return Promise.reject(new Error("no key"));
-  sdkPromise = new Promise((resolve, reject) => {
-    const s = document.createElement("script");
-    s.src = `https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=${encodeURIComponent(key)}`;
-    s.async = true;
-    s.onload = () => (window.naver?.maps ? resolve(window.naver.maps) : reject(new Error("naver.maps 未就緒")));
-    s.onerror = () => reject(new Error("Naver 地圖載入失敗"));
-    document.head.appendChild(s);
-  });
-  // 失敗了要讓下一次還能重試（例如只是暫時斷線）
-  sdkPromise.catch(() => { sdkPromise = null; });
-  return sdkPromise;
-}
-
-// 回傳是否真的畫出來了；false = 呼叫端該退回連結模式
-async function renderNaver(box, item, query) {
-  if (!naverKey()) return false;
-
-  const pos = await coordsFor(item, query);
-  if (!pos) return false;
-
-  let maps;
-  try { maps = await loadNaverSdk(); }
-  catch (e) {
-    if (naverKey()) toast(e.message || "Naver 地圖載入失敗", false);
-    return false;
-  }
-
-  try {
-    box.hidden = false;
-    box.classList.remove("map-fallback");
-    box.innerHTML = "";
-    const center = new maps.LatLng(pos.lat, pos.lng);
-    naverMap = new maps.Map(box, { center, zoom: 16 });
-    new maps.Marker({ position: center, map: naverMap, title: query });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// 座標來源：優先用項目上已經存的，沒有就走 Open-Meteo 免金鑰地理編碼
-// （weather.js 已經有 memo cache），拿到後順手寫回 DB，下次就不用再查。
-// 不用 Naver 自己的 Geocoding API —— 那個要 server secret，得多開一支 Edge Function。
-async function coordsFor(item, query) {
-  if (hasCoords(item)) return { lat: num(item.lat), lng: num(item.lng) };
-  const geo = await geocode(query);
-  if (!geo) return null;
-  if (item?.id) {
-    updateItem(item.id, { lat: geo.lat, lng: geo.lon }).catch(() => { /* 寫不回去不影響顯示 */ });
-    item.lat = geo.lat;
-    item.lng = geo.lon;
-  }
-  return { lat: geo.lat, lng: geo.lon };
 }

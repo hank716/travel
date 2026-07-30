@@ -222,11 +222,6 @@ select[multiple] option { padding: 5px 8px; border-radius: 8px; }
 .itin-actions { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; }
 
 .map-frame { width: 100%; height: 360px; border: 0; border-radius: var(--radius-sm); }
-/* Naver 沒金鑰時的替代內容：不要留一塊 360px 的空白，縮成一段提示 + 連結 */
-.map-frame.map-fallback {
-  height: auto; display: flex; flex-direction: column; align-items: flex-start; gap: 10px;
-  background: var(--bg-soft); border: 1px solid var(--line); padding: 16px;
-}
 
 /* ---------- 左滑刪除 ---------- */
 /* touch-action: pan-y = 直向捲動維持原生，橫向留給我們自己處理 */
@@ -438,7 +433,6 @@ body.readonly .readonly-only { display: block; }
   .itin-body { flex-basis: 100%; }
   .itin-actions { flex-direction: row; width: 100%; justify-content: flex-end; }
   .map-frame { height: 280px; }
-  .map-frame.map-fallback { height: auto; }
   .trip-badge .btn { padding: 6px 10px; }
   /* 標題＋按鈕在窄螢幕換行，避免超出版面（行李/行程等卡片標頭） */
   .card-head { flex-wrap: wrap; }
