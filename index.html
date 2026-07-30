@@ -5,16 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#FFF4E8" />
   <title>旅程規劃 · Trip Planner</title>
-  <link rel="stylesheet" href="./css/app.css?v=20260730a" />
+  <link rel="stylesheet" href="./css/app.css?v=20260730b" />
   <!-- 網站圖示：ico 排在最前面，裡面有 16/32/48/64/128/256 六種各自算過的點陣圖，
        分頁列那種 16px 的尺寸靠它才會銳利；SVG 補高解析度場合；
        apple-touch-icon 是 iOS「加到主畫面」用的。圖檔都由 tools/make-icons.py 產生。
        圖檔會被瀏覽器長期快取，所以一樣帶 ?v=。 -->
-  <link rel="icon" sizes="16x16 32x32 48x48 64x64 128x128 256x256" href="./assets/favicon.ico?v=20260730a" />
-  <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg?v=20260730a" />
-  <link rel="icon" type="image/png" sizes="192x192" href="./assets/icon-192.png?v=20260730a" />
-  <link rel="icon" type="image/png" sizes="512x512" href="./assets/icon-512.png?v=20260730a" />
-  <link rel="apple-touch-icon" href="./assets/apple-touch-icon.png?v=20260730a" />
+  <link rel="icon" sizes="16x16 32x32 48x48 64x64 128x128 256x256" href="./assets/favicon.ico?v=20260730b" />
+  <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg?v=20260730b" />
+  <link rel="icon" type="image/png" sizes="192x192" href="./assets/icon-192.png?v=20260730b" />
+  <link rel="icon" type="image/png" sizes="512x512" href="./assets/icon-512.png?v=20260730b" />
+  <link rel="apple-touch-icon" href="./assets/apple-touch-icon.png?v=20260730b" />
   <meta name="apple-mobile-web-app-title" content="旅程規劃" />
 </head>
 <body>
@@ -412,7 +412,7 @@
             <li><strong>往左滑可以刪除</strong>（手機）—— 行程、記帳、行李的列往左滑會露出紅色刪除鈕。不想滑的話，點開該列，編輯視窗裡也有刪除。</li>
             <li><strong>總覽的三個統計數字可以點</strong> —— 直接跳到行程頁、記帳頁，或捲到成員清單。</li>
             <li><strong>行程項目的「地圖」鈕</strong> —— Google 行程會把該地點帶進行程頁下方的地圖，右上角「在地圖開啟行程」還能把整天串成一條路線。</li>
-            <li><strong>韓國行程改用 Naver 地圖</strong> —— 在總覽的行程設定切換。Google Maps 在韓國沒有步行與大眾運輸路線。Naver 不給內嵌，所以切過去之後沒有下方那張地圖卡，改成點項目的「地圖 ↗」直接跳去 Naver（手機優先開 Naver App）。地點會自動轉成韓文；轉不準的話，項目的「地圖搜尋字」自己填韓文（例如 경복궁）即可覆蓋。</li>
+            <li><strong>韓國行程改用 Naver 地圖</strong> —— 在總覽的行程設定切換。Google Maps 在韓國沒有步行與大眾運輸路線。Naver 不給內嵌，所以切過去之後沒有下方那張地圖卡，改成點項目的「地圖 ↗」直接跳去 Naver（手機優先開 Naver App）。地點會自動轉成韓文；不準或看不懂的話，項目的「地圖搜尋字」自己填即可覆蓋 —— Naver 的店家資料同時登錄了官方英文名，所以填英文（Gyeongbokgung Palace）或韓文（경복궁）都搜得到。把手機的 Naver App 設成英文時，填英文地標才看得懂。</li>
             <li><strong>打字時按 Enter 不會送出</strong> —— 一律用「儲存」／「送出」鈕，才不會打到一半誤存。只有登入頁保留 Enter 送出。</li>
             <li><strong>唯讀成員也能留言</strong> —— 在備忘錄的筆記底下。</li>
           </ul>
@@ -602,7 +602,7 @@
             <input name="location_name" placeholder="例如：東京晴空塔" maxlength="80" />
           </label>
           <label>地圖搜尋字（選填）
-            <input name="map_query" placeholder="留空＝用上面的地點。Naver 要當地語言，如 경복궁" maxlength="80" />
+            <input name="map_query" placeholder="留空＝用上面的地點。Naver 吃英文或韓文，如 Gyeongbokgung Palace / 경복궁" maxlength="80" />
           </label>
           <label>備註
             <textarea name="notes" rows="2" placeholder="訂位、票價、交通方式…"></textarea>
@@ -890,26 +890,26 @@
   <script type="importmap">
   {
     "imports": {
-      "@/ai.js": "./js/ai.js?v=20260730a",
-      "@/aichat.js": "./js/aichat.js?v=20260730a",
-      "@/auth.js": "./js/auth.js?v=20260730a",
-      "@/constants.js": "./js/constants.js?v=20260730a",
-      "@/expenses.js": "./js/expenses.js?v=20260730a",
-      "@/fx.js": "./js/fx.js?v=20260730a",
-      "@/itinerary.js": "./js/itinerary.js?v=20260730a",
-      "@/maps.js": "./js/maps.js?v=20260730a",
-      "@/memo.js": "./js/memo.js?v=20260730a",
-      "@/packing.js": "./js/packing.js?v=20260730a",
-      "@/settle.js": "./js/settle.js?v=20260730a",
-      "@/supabase.js": "./js/supabase.js?v=20260730a",
-      "@/swipe.js": "./js/swipe.js?v=20260730a",
-      "@/trip.js": "./js/trip.js?v=20260730a",
-      "@/ui.js": "./js/ui.js?v=20260730a",
-      "@/weather.js": "./js/weather.js?v=20260730a"
+      "@/ai.js": "./js/ai.js?v=20260730b",
+      "@/aichat.js": "./js/aichat.js?v=20260730b",
+      "@/auth.js": "./js/auth.js?v=20260730b",
+      "@/constants.js": "./js/constants.js?v=20260730b",
+      "@/expenses.js": "./js/expenses.js?v=20260730b",
+      "@/fx.js": "./js/fx.js?v=20260730b",
+      "@/itinerary.js": "./js/itinerary.js?v=20260730b",
+      "@/maps.js": "./js/maps.js?v=20260730b",
+      "@/memo.js": "./js/memo.js?v=20260730b",
+      "@/packing.js": "./js/packing.js?v=20260730b",
+      "@/settle.js": "./js/settle.js?v=20260730b",
+      "@/supabase.js": "./js/supabase.js?v=20260730b",
+      "@/swipe.js": "./js/swipe.js?v=20260730b",
+      "@/trip.js": "./js/trip.js?v=20260730b",
+      "@/ui.js": "./js/ui.js?v=20260730b",
+      "@/weather.js": "./js/weather.js?v=20260730b"
     }
   }
   </script>
-  <script src="./config.js?v=20260730a"></script>
-  <script type="module" src="./js/app.js?v=20260730a"></script>
+  <script src="./config.js?v=20260730b"></script>
+  <script type="module" src="./js/app.js?v=20260730b"></script>
 </body>
 </html>

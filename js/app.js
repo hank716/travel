@@ -1488,7 +1488,7 @@ function renderMapProviderSelect(trip) {
     (p) => `<option value="${p.value}" ${p.value === cur ? "selected" : ""}>${escapeHtml(p.label)}</option>`
   ).join("");
   setText("#mapProviderHint", cur === "naver"
-    ? "Naver 不能內嵌在網頁裡，所以點項目的「地圖」會直接跳去 Naver（手機優先開 App）。地點會自動轉成韓文再拿去搜（轉一次就存起來）；轉得不準的話，到該項目的「地圖搜尋字」自己填韓文即可覆蓋。"
+    ? "Naver 不能內嵌在網頁裡，所以點項目的「地圖」會直接跳去 Naver（手機優先開 App）。地點會自動轉成韓文再拿去搜（轉一次就存起來）；「地圖搜尋字」填英文或韓文都可以覆蓋 —— App 設成英文的話填英文地標才看得懂。"
     : "去韓國的話改用 Naver，Google Maps 在韓國查不到路線。");
 
   sel.onchange = async () => {

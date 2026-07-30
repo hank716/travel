@@ -68,22 +68,43 @@ function stripRegionTail(s) {
 // 獨立成詞的純英文單字（黏在韓文上的不算，例如「BHC치킨」的 BHC）
 const LATIN_WORD = /(^|\s)[A-Za-z][A-Za-z.'&-]*(\s|$)/;
 
-// 「這個字串可以原封不動丟給 Naver 嗎」＝ 有韓文，而且沒有夾雜獨立的英文單字。
-// 夾雜英文的（如「ARTE MUSEUM 제주」）交給 AI 轉成在地正式名更準。
-const isKoreanName = (s) => !!s && HANGUL.test(s) && !LATIN_WORD.test(s);
+// 中日文字。Naver 搜不到中文地名（「濟州國際機場」查無結果），一律要先轉過。
+const CJK = /[一-鿿぀-ヿ]/;
+
+// 純拉丁字母的字串（英文店名／羅馬拼音）
+const LATIN_ONLY = /^[A-Za-z0-9\s.,'&()\/+-]+$/;
+
+// 「這個字串可以原封不動丟給 Naver 嗎」。Naver 兩種語言都吃：
+//
+//   純英文    Naver 的店家資料本來就登錄了官方英文名（「Seongsan Ilchulbong Tuff
+//             Cone」「SNOOPY GARDEN」），搜得到，而且使用者把 App 設成英文時
+//             看到的就是這個名字 —— 送韓文進去反而整頁都是看不懂的字
+//   純韓文    最準，沒有英文名的小店只能靠它
+//
+// 擋掉的只有兩種：中文（Naver 真的查無結果）、以及韓文夾雜獨立英文單字的混雜寫法
+// （實際遇過「뼈다귀에반하다 Jeju」，那條英文尾巴會讓 Naver 直接搜不到）。
+// 這兩種都交給 AI 轉成在地正式名。
+const naverSearchable = (s) => {
+  if (!s) return false;
+  if (CJK.test(s)) return false;
+  if (LATIN_ONLY.test(s)) return true;
+  return HANGUL.test(s) && !LATIN_WORD.test(s);
+};
 
 // 項目 → 拿來搜尋的字串。
-// Google 吃中文地名；Naver 只認韓文（「濟州國際機場」搜不到，「제주국제공항」才行），
-// 所以 Naver 有自己一條優先序：
-//   1. map_query 清掉地區尾巴後是乾淨的韓文名 —— 使用者/AI 特地填的，最準，優先
+// Google 吃中文地名；Naver 搜不到中文（「濟州國際機場」查無結果），但韓文與官方
+// 英文名都吃，所以 Naver 有自己一條優先序：
+//   1. map_query 是 Naver 認得的寫法（英文或韓文）—— 使用者/AI 特地填的，最準，優先
 //   2. naver_query —— AI 轉過並快取在 DB 的韓文名
 //   3. 都沒有就先用原地名頂著（搜得不準，但至少開得起來），同時排程去轉
 function queryOf(it, provider) {
   const mq = (it?.map_query || "").trim();
   const fallback = (mq || it?.location_name || it?.title || "").trim();
   if (providerOf({ map_provider: provider }) !== "naver") return fallback;
-  const cleaned = stripRegionTail(mq);
-  if (isKoreanName(cleaned)) return cleaned;
+  // 砍地區尾巴只對混雜寫法有意義。純英文名不能砍：官方英文名很多本來就以地名結尾，
+  // 「Lotte City Hotel Jeju」砍成「Lotte City Hotel」會跑到首爾或大田的同名飯店。
+  const cleaned = LATIN_ONLY.test(mq) ? mq : stripRegionTail(mq);
+  if (naverSearchable(cleaned)) return cleaned;
   // 連退回原地名時也先清一次尾巴：naver_query 還沒補上的空窗期，
   // 用「뼈다귀에반하다」去搜也比「뼈다귀에반하다 Jeju」有機會搜到
   return (it?.naver_query || "").trim() || stripRegionTail(fallback) || fallback;
@@ -172,10 +193,11 @@ const askedNaver = new Set();
 
 export function forgetNaverQueries() { askedNaver.clear(); }
 
-// 判斷條件是「map_query 不是乾淨的韓文名」而不是「完全沒有韓文」：後者會讓
+// 判斷條件是「map_query 不是 Naver 認得的寫法」而不是「完全沒有韓文」：後者會讓
 // 「ARTE MUSEUM 제주」這種夾雜英文的寫法被當成已經轉好，永遠補不到 naver_query。
+// 反過來，已經填了官方英文名的項目不必再問 AI —— 那個名字 Naver 本來就搜得到。
 const needsNaver = (it) =>
-  it?.id && !it.naver_query && !isKoreanName(stripRegionTail(it.map_query || ""))
+  it?.id && !it.naver_query && !naverSearchable(stripRegionTail(it.map_query || ""))
   && (it.map_query || it.location_name || it.title);
 
 /**
