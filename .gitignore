@@ -13,5 +13,7 @@ supabase/.branches/
 # 編輯器 / 系統
 .vscode/
 .idea/
+# 目前只被「全域」gitignore 擋著，換一台機器就沒保護 —— 在 repo 裡也擋一份
+.claude/settings.local.json
 node_modules/
 *.log
