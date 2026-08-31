@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Hank Wang
+
 // 備忘錄資料層：筆記 CRUD + 留言 + Realtime。鏡像 packing.js。
 // 弱連結：只認 trip_id / memo_id / member_id，不引用其他功能模組。
 import { supabase, subscribeChannel } from "@/supabase.js";

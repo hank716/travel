@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Hank Wang
+
 // 記帳資料層：支出 + 分帳（CRUD + Realtime）。
 import { supabase, subscribeChannel } from "@/supabase.js";
 

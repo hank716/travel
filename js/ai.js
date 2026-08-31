@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Hank Wang
+
 // 呼叫 Supabase Edge Function「ai-assist」（金鑰在 function 端，前端看不到）。
 import { supabase } from "@/supabase.js";
 

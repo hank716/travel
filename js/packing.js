@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Hank Wang
+
 // 行李清單資料層：CRUD + Realtime。鏡像 itinerary.js。
 // 弱連結：只認 trip_id / member_id（null = 共用），不引用行程或天氣模組。
 import { supabase, subscribeChannel } from "@/supabase.js";

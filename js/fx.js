@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Hank Wang
+
 // 即時匯率：open.er-api.com（免金鑰，含全球主要貨幣）。
 // 三層快取：記憶體 → Supabase fx_cache（每日一筆，跨裝置共用）→ 外部 API。
 import { supabase } from "@/supabase.js";

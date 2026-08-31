@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Hank Wang
+
 // 共用常數：全世界幣別清單（ISO 4217）、成員配色。
 
 // [代碼, 中文名, 符號] — 涵蓋全球主要流通貨幣（即時匯率來源 open.er-api.com 支援的範圍）

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Hank Wang
+
 // Supabase Edge Function: ai-assist
 // 金鑰只存在於此函式環境變數，前端永遠看不到：
 //   supabase secrets set GEMINI_API_KEY=xxxx

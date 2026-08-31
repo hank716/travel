@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-only
+-- Copyright (c) 2026 Hank Wang
+
 -- =============================================================================
 -- reset.sql — 清空資料重來（在 Supabase Dashboard → SQL Editor 執行）
 -- ⚠️ 不可復原！執行前請確定真的要清。

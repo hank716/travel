@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-only
+-- Copyright (c) 2026 Hank Wang
+
 -- =============================================================================
 -- 日本旅遊規劃系統 — 資料庫 Schema（Postgres / Supabase）
 -- 在 Supabase Dashboard → SQL Editor 貼上整份執行即可（可重複執行）。

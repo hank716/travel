@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Hank Wang
+
 // 公開設定 — 可安全 commit 進 public repo。
 // Supabase URL 與 anon key 本來就是要給瀏覽器用的，資料安全靠 RLS（見 supabase/schema.sql）。
 // ⚠️ service_role key / Gemini key 絕不可寫在這裡。

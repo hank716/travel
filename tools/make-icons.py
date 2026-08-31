@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (c) 2026 Hank Wang
+
 """從同一份幾何定義產生所有 icon 檔（favicon.ico / 各尺寸 PNG）。
 
 為什麼不直接把 assets/favicon.svg 丟給轉檔工具縮圖：

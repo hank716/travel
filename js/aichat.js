@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Hank Wang
+
 // 共用的對話式 AI 外殼：行程、記帳、行李三個功能共用同一個視窗與同一套安全機制。
 //
 // 對話式 AI 麻煩的不是叫模型，而是「別把資料改壞」。這裡收斂的就是那幾件事：

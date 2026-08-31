@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Hank Wang
+
 // 地圖服務抽象層：每趟行程各自選 Google 或 Naver。
 //
 // 為什麼需要這層：韓國政府限制圖資輸出，Google Maps 在韓國沒有步行/大眾運輸

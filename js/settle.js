@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Hank Wang
+
 // 結算演算法（純函式）：把多幣別支出換算到基準幣別後算出每人餘額與最少轉帳。
 
 const EPS = 0.005;

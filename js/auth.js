@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Hank Wang
+
 // 認證：管理員用 Email、成員用使用者名稱（合成 email）。
 import { supabase } from "@/supabase.js";
 

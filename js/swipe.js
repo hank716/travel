@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Hank Wang
+
 // 左滑刪除：把清單裡的每一列包一層，向左拖曳露出紅色刪除鈕。
 // 三個清單（行程項目 / 記帳支出 / 行李物品）共用，純 DOM，不認識任何資料層。
 import { hasTextSelectionIn } from "@/ui.js";

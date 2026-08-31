@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Hank Wang
+
 // 行程資料層：建立 / 加入 / 讀取 / 成員 / 啟用幣別 / Realtime。
 import { supabase, subscribeChannel } from "@/supabase.js";
 import { todayStr } from "@/constants.js";

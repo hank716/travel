@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Hank Wang
+
 // 跨模組共用的小工具：跳脫、toast、錯誤訊息翻譯。
 // 抽出來的原因：對話式 AI 外殼（aichat.js）也要用同一套，
 // 不想為了兩三個函式讓它反過來相依 app.js（會變成循環引用）。

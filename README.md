@@ -1,5 +1,7 @@
 # 🧳 旅程規劃 · Trip Planner
 
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](./LICENSE)
+
 多人共用、多幣別、即時同步的**旅遊規劃 + 記帳**網頁 App。
 
 排行程、記帳分帳、查天氣、列行李、寫備忘——一趟旅行需要的都在同一個地方，
@@ -192,3 +194,25 @@ RLS 設計重點：
 - 免費方案 Supabase 連續 7 天無 API 活動會被暫停，靠 `keepalive.yml` 每日心跳撐著
 - AI 回覆一律是「產生草稿 → 你確認 → 才寫進 DB」，不會直接動資料
 - 還沒做：PWA 離線
+
+---
+
+## 授權
+
+Copyright (c) 2026 Hank Wang。本專案採 **GNU AGPL-3.0** 授權，全文見 [`LICENSE`](./LICENSE)。
+
+**你可以**自由使用、修改、散布這份程式，商業或非商業都行。
+**你必須**保留著作權與授權聲明，而且改作出來的版本一樣要用 AGPL-3.0 釋出**原始碼**。
+
+**§13 網路條款**是 AGPL 跟 GPL 的關鍵差別，對這種網頁 App 特別對味：
+把改過的版本架成網站給別人用，就算你一個檔案都沒散布出去，
+也必須讓那些使用者拿得到你那份的原始碼。所以 App 的[說明頁](https://hank716.github.io/travel/)
+最下面放了一張「關於 · 授權」卡，直接連回這個 repo —— 你 fork 出去架站時記得把它改成你自己的來源。
+
+**想閉源商用？** 例如要把它整進不打算開源的商業產品裡，AGPL 的義務會擋住你 ——
+這種情況可以另外洽談商業授權，請開一個 [GitHub Issue](https://github.com/hank716/travel/issues) 聯繫。
+（雙授權成立的前提是著作權集中，所以**送 PR 即表示你同意自己的貢獻以相同條款授權給本專案**。）
+
+**第三方相依**：repo 裡沒有夾帶任何第三方原始碼。`@supabase/supabase-js`
+（`js/supabase.js` 從 esm.sh 載入）與 Deno std（兩支 Edge Function）都是執行時才從 CDN 抓，
+各自維持自己的 MIT 授權，不受本授權影響。

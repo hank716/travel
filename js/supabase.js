@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Hank Wang
+
 // Supabase client（Email/密碼帳號制）。
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 

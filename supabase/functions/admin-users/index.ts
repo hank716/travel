@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Hank Wang
+
 // Supabase Edge Function: admin-users
 // 管理員專用（用 Supabase 自動注入的 service_role）。先驗證呼叫者 profiles.is_admin。
 //   supabase functions deploy admin-users --use-api

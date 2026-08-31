@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Hank Wang
+
 // 天氣：行程地點 →（AI 推斷行政區）→ Open-Meteo 即時預報（超過範圍改去年同期參考）。
 // 解析到的座標寫回 itinerary_items.lat/lng/weather_area 快取，避免重複呼叫 AI。
 import { callAI } from "@/ai.js";
