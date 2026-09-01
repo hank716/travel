@@ -117,7 +117,6 @@ supabase/functions/admin-users/   service_role（帳號與行程管理後台）
 
 .github/workflows/keepalive.yml   每日 ping，防 Supabase 免費方案 7 天無活動被暫停
 tools/make-icons.py         產生各尺寸 favicon
-legacy/                     舊的靜態行程頁（保留參考，未使用）
 ```
 
 ---

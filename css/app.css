@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-only
    Copyright (c) 2026 Hank Wang */
 
-/* 設計系統 — 沿用 legacy 行程頁的色彩與圓角語彙 */
+/* 設計系統 — 色彩與圓角語彙 */
 :root {
   --bg: #FFF8EF;
   --bg-soft: #FFFDF8;
