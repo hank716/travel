@@ -403,7 +403,16 @@ body.readonly .readonly-only { display: block; }
 .memo-title { margin: 0; font-size: 16px; flex: 1; min-width: 0; word-break: break-word; }
 .memo-head .btn { flex: 0 0 auto; }
 .memo-meta { margin: 2px 0 0; }
-.memo-body { white-space: pre-wrap; word-break: break-word; margin-top: 8px; }
+.memo-body { margin-top: 8px; overflow-wrap: anywhere; }
+/* 一行一個 block + 懸掛縮排：折行的部分往內縮，窄螢幕才分得出「接續」與「新的一條」 */
+.memo-line { white-space: pre-wrap; padding-left: 1.15em; text-indent: -1.15em; }
+.memo-line--gap { height: .5em; }
+/* 長筆記先收到約 8 行，底部用遮罩淡出暗示「還有」 */
+.memo-body--clamp { max-height: 13.6em; overflow: hidden;
+  -webkit-mask-image: linear-gradient(#000 74%, transparent);
+  mask-image: linear-gradient(#000 74%, transparent); }
+.memo-more { margin-top: 4px; padding: 6px 0; border: 0; background: transparent;
+  color: var(--accent-dark); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
 .memo-comments { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
 .memo-comments-head { margin: 0 0 8px; font-size: 13px; color: var(--muted); font-weight: 700; }
 .memo-comment { display: flex; align-items: flex-start; gap: 8px; padding: 6px 0; }
@@ -448,6 +457,18 @@ body.readonly .readonly-only { display: block; }
      （exp-body 被壓成一字一行），這裡收回來。記帳是要一眼掃完的清單，
      不像行李適合讓按鈕獨佔一行——說明太長本來就用 .exp-desc 的 ellipsis 截字。 */
   .exp-row .itin-actions { width: auto; }
+
+  /* 頁面左右留白 18px + 卡片 22px + 內層卡片 16px，在 390px 的手機上會把正文
+     壓到剩兩百出頭 px。三層各讓一點，讀起來才不會一句話折三行。 */
+  .page { width: calc(100% - 24px); }
+  .card { padding: 16px 14px; }
+  .memo-card { padding: 12px 13px; }
+  .memo-body { font-size: 15px; line-height: 1.8; }
+  .memo-title { font-size: 15px; }
+  /* 留言框在窄螢幕跟「送出」擠在一行只剩不到 150px，改成自己佔一整行 */
+  .memo-comment-form { flex-wrap: wrap; }
+  .memo-comment-form input { flex: 1 1 100%; }
+  .memo-comment-form .btn { margin-left: auto; }
 }
 
 /* ---------- Modal ---------- */

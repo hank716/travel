@@ -32,7 +32,7 @@ import { escapeHtml, escapeAttr, toast, humanError, blockEnterSubmit, hasTextSel
 import { openAiChat, closeAiChat, bindAiChat } from "@/aichat.js";
 import {
   MAP_PROVIDERS, providerOf, openLabel, hasEmbed,
-  routeUrl, itemMapUrl, itemAppUrl, previewMap, resetMap,
+  routePlan, itemMapUrl, itemAppUrl, previewMap, resetMap,
   ensureNaverQueries, forgetNaverQueries,
 } from "@/maps.js";
 import {
@@ -1772,8 +1772,16 @@ function renderMapLinks(trip, shownItems) {
   const provider = providerOf(trip);
   if (!hasEmbed(provider)) return;
   const open = $("#mapOpen");
-  open.href = routeUrl(provider, shownItems);
-  open.textContent = openLabel(provider);
+  const { url, used, total } = routePlan(provider, shownItems);
+  open.href = url;
+  // 站數標在按鈕上：路線連不連得起來、有沒有被 Google 的上限砍掉，
+  // 點進去之前就要看得出來 —— 不然使用者只會覺得「它又沒幫我連成一天」。
+  open.textContent = used > 1 ? `${openLabel(provider)}（${used} 站）` : openLabel(provider);
+  setHidden("#mapRouteNote", used >= total);
+  if (used < total) {
+    setText("#mapRouteNote",
+      `⚠️ 這天有 ${total} 站，Google 一條路線最多帶 ${used} 站；起點與最後一站都在，中間少放了 ${total - used} 站。`);
+  }
 }
 
 // ---------- 日期欄位（原生日曆 + 自畫的 YYYY-MM-DD） ----------
@@ -2401,7 +2409,7 @@ async function renderMemo(trip) {
           ${editable ? `<button class="btn btn--ghost btn--sm" type="button" data-memo-edit="${m.id}">編輯</button>` : ""}
         </div>
         <p class="status memo-meta">${escapeHtml(memberName(m.created_by))} · ${fmtWhen(m.created_at)}</p>
-        ${m.body ? `<div class="memo-body">${escapeHtml(m.body)}</div>` : ""}
+        ${memoBodyHtml(m)}
         <div class="memo-comments">
           <h4 class="memo-comments-head">留言 <span class="status">${cs.length}</span></h4>
           ${cs.map((c) => `
@@ -2424,10 +2432,50 @@ async function renderMemo(trip) {
 
   list.querySelectorAll("[data-memo-edit]").forEach((b) =>
     (b.onclick = () => openMemoModal(memos.find((m) => m.id === b.dataset.memoEdit))));
+  list.querySelectorAll("[data-memo-more]").forEach((b) => (b.onclick = () => toggleMemoBody(list, b)));
   list.querySelectorAll("[data-comment-del]").forEach((b) =>
     (b.onclick = () => onDeleteComment(b.dataset.commentDel)));
   list.querySelectorAll(".memo-comment-form").forEach((f) =>
     f.addEventListener("submit", onAddComment));
+}
+
+// 超過這個行數（或字數）的筆記先收起來。訂位資訊、AI 排的行程一貼就是幾十行，
+// 手機上整篇攤開會把後面的筆記推到捲不到的地方。
+const MEMO_CLAMP_LINES = 8;
+const MEMO_CLAMP_CHARS = 280;
+
+// 筆記內文一行一個 block，而不是整塊 white-space: pre-wrap。
+//
+// 為什麼要拆：手機寬度下一條「去程 BR2198　TPE 09:40 → NRT 14:20」會折成兩三行，
+// 折下去的部分跟下一條靠在同一個左邊界，整篇就看不出哪裡是新的一條。拆成 block
+// 之後可以各自吃懸掛縮排（.memo-line），折行的部分往內縮，一眼分得出接續與換條。
+// 每行仍保留 pre-wrap，使用者自己打的縮排不會被吃掉。
+function memoLinesHtml(body) {
+  return String(body).split("\n").map((ln) =>
+    ln.trim() === ""
+      ? `<div class="memo-line memo-line--gap"></div>`
+      : `<div class="memo-line">${escapeHtml(ln)}</div>`
+  ).join("");
+}
+
+function memoBodyHtml(m) {
+  if (!m.body) return "";
+  const inner = memoLinesHtml(m.body);
+  const long = m.body.split("\n").length > MEMO_CLAMP_LINES || m.body.length > MEMO_CLAMP_CHARS;
+  if (!long) return `<div class="memo-body">${inner}</div>`;
+  return `
+    <div class="memo-body memo-body--clamp" data-memo-body="${m.id}">${inner}</div>
+    <button class="memo-more" type="button" data-memo-more="${m.id}" aria-expanded="false">展開全文 ▾</button>`;
+}
+
+function toggleMemoBody(list, btn) {
+  const body = list.querySelector(`[data-memo-body="${btn.dataset.memoMore}"]`);
+  if (!body) return;
+  const open = !body.classList.toggle("memo-body--clamp");
+  btn.textContent = open ? "收合 ▴" : "展開全文 ▾";
+  btn.setAttribute("aria-expanded", String(open));
+  // 收合時視窗常常已經捲到筆記下半部，收起來會整個跳掉——把按鈕拉回視線內
+  if (!open) btn.scrollIntoView({ block: "nearest" });
 }
 
 function openMemoModal(memo) {

@@ -7,7 +7,7 @@
 // 路線、店家資料也殘缺，排韓國行程幾乎沒用。但兩家的能力差很多，不是換個
 // 網域就好：
 //
-//   Google  免金鑰的 iframe embed，只吃地名字串，多點路線一條網址就搞定
+//   Google  免金鑰的 iframe embed；多點路線用官方的 Maps URLs（dir/?api=1）一條網址就搞定
 //   Naver   不能 iframe（X-Frame-Options），內嵌只能靠官方 JS SDK，而那個
 //           ncpKeyId 我們申請不到 —— 所以 Naver 一律「跳出去開」，不內嵌
 //
@@ -154,16 +154,63 @@ export function itemAppUrl(provider, item) {
 // ---------- 整天路線連結（只有 Google）----------
 // Naver 的網頁版路線網址官方沒有文件，而且要首尾座標才組得出來；既然 Naver 現在
 // 是逐點跳轉、連地圖卡都不顯示，這裡就只服務 Google。
-// items = 目前顯示的行程項目（itinerary rows）
-export function routeUrl(provider, items) {
-  const p = providerOf({ map_provider: provider });
-  if (p !== "google") return "https://map.naver.com/";
 
-  // 注意不能寫成 list.map(queryOf)：map 會把索引當成第二個參數餵進 provider
-  const pts = (items || []).map((i) => queryOf(i, p)).filter(Boolean);
-  if (pts.length === 0) return "https://www.google.com/maps";
-  if (pts.length === 1) return searchUrl("google", pts[0]);
-  return "https://www.google.com/maps/dir/" + pts.map(encodeURIComponent).join("/");
+// Google Maps URLs 的上限：起點 + 終點 + 最多 9 個中途點。
+const MAX_WAYPOINTS = 9;
+const MAX_STOPS = MAX_WAYPOINTS + 2;
+
+// 一站在網址裡長什麼樣。有座標就用座標：地名字串要 Google 自己 geocode，
+// 「道後溫泉」這種到處都有同名的猜錯一站整條路線就歪掉。
+function stopOf(it) {
+  if (hasCoords(it)) return `${num(it.lat)},${num(it.lng)}`;
+  return queryOf(it, "google");
+}
+
+/**
+ * 把一批行程項目收成真的可以送給 Google 的站點序列。
+ * 排序就是傳進來的順序（listItems 已經依日期→時間排過）。
+ */
+function routeStops(items) {
+  const all = (items || []).map(stopOf).filter(Boolean);
+  // 同一個地點連著出現很常見（早上從飯店出發、晚上又回同一家，或是同一個景點
+  // 拆成兩筆）。連續重複對 Google 來說是一段長度 0 的路程，白白吃掉一個中途點名額。
+  const dedup = all.filter((s, i) => s !== all[i - 1]);
+  if (dedup.length <= MAX_STOPS) return { stops: dedup, total: dedup.length };
+  // 超過上限：留住首尾（一天的起點跟過夜的地方最不能掉），中間取前 9 個。
+  // 不假裝沒事：少掉幾站要讓使用者知道，所以連 total 一起回傳給介面去標。
+  const stops = [dedup[0], ...dedup.slice(1, -1).slice(0, MAX_WAYPOINTS), dedup[dedup.length - 1]];
+  return { stops, total: dedup.length };
+}
+
+/**
+ * 整天路線。回傳 { url, used, total }，used < total 表示有站被 Google 的上限砍掉。
+ *
+ * 用官方文件化的 Maps URLs（dir/?api=1&origin=&destination=&waypoints=），
+ * 不再用 /maps/dir/A/B/C 那種路徑式寫法 —— 路徑式沒有文件、手機點進去常常
+ * 只開成一個搜尋結果而不是一條路線，也沒地方指定交通方式。
+ *
+ * travelmode 固定 driving：transit 在 Google 只支援「起點→終點」，帶中途點會被
+ * 整排忽略，整天路線就斷了 —— 而這條連結的意義就是「一眼看完順不順路」。
+ */
+export function routePlan(provider, items) {
+  const p = providerOf({ map_provider: provider });
+  if (p !== "google") return { url: "https://map.naver.com/", used: 0, total: 0 };
+
+  const { stops, total } = routeStops(items);
+  if (stops.length === 0) return { url: "https://www.google.com/maps", used: 0, total: 0 };
+  if (stops.length === 1) return { url: searchUrl("google", stops[0]), used: 1, total };
+
+  const q = new URLSearchParams({
+    api: "1",
+    origin: stops[0],
+    destination: stops[stops.length - 1],
+    travelmode: "driving",
+  });
+  const mid = stops.slice(1, -1);
+  // URLSearchParams 會把分隔用的 | 也編碼成 %7C，Google 照樣讀得懂，
+  // 所以直接交給它組，不自己拼字串（站名裡的 & # 才不會把網址打斷）。
+  if (mid.length) q.set("waypoints", mid.join("|"));
+  return { url: `https://www.google.com/maps/dir/?${q}`, used: stops.length, total };
 }
 
 // ---------- 內嵌預覽（只有 Google）----------
