@@ -404,9 +404,29 @@ body.readonly .readonly-only { display: block; }
 .memo-head .btn { flex: 0 0 auto; }
 .memo-meta { margin: 2px 0 0; }
 .memo-body { margin-top: 8px; overflow-wrap: anywhere; }
-/* 一行一個 block + 懸掛縮排：折行的部分往內縮，窄螢幕才分得出「接續」與「新的一條」 */
+/* 一行一個 block + 懸掛縮排：折行的部分往內縮，窄螢幕才分得出「接續」與「新的一條」。
+   作者自己打的縮排由 JS 換算成 padding-left 寫在 style 上（見 memoLineHtml）——
+   留在文字裡的話會被下面的負 text-indent 一起拉掉，階層就看不出來了。 */
 .memo-line { white-space: pre-wrap; padding-left: 1.15em; text-indent: -1.15em; }
 .memo-line--gap { height: .5em; }
+/* 用空白排出來的欄位：強制不折行，改成左右捲。折行只會讓第二欄掉到下一行，
+   看不出那個值屬於哪一欄——欄位對齊的前提本來就是不折行。 */
+.memo-table { margin: .4em 0; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: 10px;
+  overflow-x: auto; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain;
+  white-space: pre; word-break: normal; overflow-wrap: normal; tab-size: 4;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px; line-height: 1.65;
+  /* 捲動陰影：不加提示的話，被切掉的那一欄在手機上等於不存在——沒人會想到去左右滑。
+     local 的那兩層跟著內容捲，捲到底就蓋住陰影；scroll 的兩層釘在邊緣。
+     於是「右邊還有東西」才會出現右側陰影，純 CSS，不必監聽 scroll。 */
+  background:
+    linear-gradient(to right, var(--bg) 40%, rgba(255,248,239,0)) left / 28px 100% no-repeat local,
+    linear-gradient(to left,  var(--bg) 40%, rgba(255,248,239,0)) right / 28px 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%,    rgba(92,68,45,.28), rgba(92,68,45,0)) left / 14px 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, rgba(92,68,45,.28), rgba(92,68,45,0)) right / 14px 100% no-repeat scroll,
+    var(--bg); }
+.memo-table:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* 長筆記先收到約 8 行，底部用遮罩淡出暗示「還有」 */
 .memo-body--clamp { max-height: 13.6em; overflow: hidden;
   -webkit-mask-image: linear-gradient(#000 74%, transparent);
@@ -465,6 +485,8 @@ body.readonly .readonly-only { display: block; }
   .memo-card { padding: 12px 13px; }
   .memo-body { font-size: 15px; line-height: 1.8; }
   .memo-title { font-size: 15px; }
+  /* 表格縮一號：多擠進一兩欄就少滑一次 */
+  .memo-table { font-size: 12px; padding: 8px; }
   /* 留言框在窄螢幕跟「送出」擠在一行只剩不到 150px，改成自己佔一整行 */
   .memo-comment-form { flex-wrap: wrap; }
   .memo-comment-form input { flex: 1 1 100%; }

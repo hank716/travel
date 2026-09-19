@@ -2451,18 +2451,74 @@ async function renderMemo(trip) {
 const MEMO_CLAMP_LINES = 8;
 const MEMO_CLAMP_CHARS = 280;
 
+// 一行「字 + 兩個以上空白 + 字」＝ 作者在用空白排欄位。單獨一行可能只是多打了
+// 一個空白，連續兩行以上才當成表格。
+const MEMO_ALIGNED_ROW = /\S {2,}\S/;
+
+// 用空白排出來的表格（保單對照、費用彙整）在手機上會整個塌掉：一折行，第二欄
+// 就掉到下一行，看不出「0015TAG65334」是 Hank 的還是 Jay 的。這種段落沒有折行
+// 折得漂亮的可能——欄位對齊的前提就是不折行。所以整段丟進等寬字的橫向捲動區塊：
+// 欄位對得準，看不完就左右滑，跟程式碼區塊一樣。
+function memoTableHtml(rows) {
+  return `<pre class="memo-table" tabindex="0" role="group"
+    aria-label="對齊表格，可左右捲動">${escapeHtml(rows.join("\n"))}</pre>`;
+}
+
+// 縮排要的是「階層」，不是「原本打了幾個空白」。
+//
+// 作者常用十幾個空白把細節對齊到上一行標題的下方——那在桌機成立，在 390px 的手機
+// 上卻等於吃掉三分之一的寬度，剩下的字擠成一條，比完全不縮排還難讀。所以把整則
+// 筆記出現過的縮排量排序後轉成階層，每階只縮一點點。真正要對齊的表格走
+// memoTableHtml，不經過這裡，原始空白照樣一個不差。
+const MEMO_INDENT_STEP = 1.1;   // em / 階
+const MEMO_MAX_LEVEL = 3;       // 再深也不多縮了，不然正文只剩一條縫
+
+function memoIndentLevels(lines) {
+  const widths = [...new Set(lines
+    .filter((ln) => ln.trim() !== "")
+    .map((ln) => /^[ \t]*/.exec(ln)[0].replace(/\t/g, "  ").length))].sort((a, b) => a - b);
+  // 差一格當成同一階：手打的縮排本來就會差個一兩格（同一則筆記裡 2 格跟 3 格
+  // 幾乎都是同一層，6 格跟 7 格也是），照字面各算一階只會愈縮愈深。
+  const levels = new Map();
+  let level = -1, prev = -9;
+  for (const w of widths) {
+    if (w - prev > 1) level++;
+    levels.set(w, Math.min(level, MEMO_MAX_LEVEL));
+    prev = w;
+  }
+  return levels;
+}
+
+// 一般行：保留懸掛縮排，但**不要用 pre-wrap 的空白去撐作者打的縮排**。
+// text-indent 的負值會把行首那幾個空白一起拉回去，於是「  Klook MYY294244」
+// 跟上一層的「【9/22–24】心齋橋…」貼在同一個左邊界，階層整個消失。
+// 改成把階層換算成 padding，懸掛縮排再疊上去：第一行落在它該在的階層，
+// 折下去的行再往內縮一點，「換一條」跟「同一條的接續」就分得開了。
+function memoLineHtml(ln, levels) {
+  if (ln.trim() === "") return `<div class="memo-line memo-line--gap"></div>`;
+  const lead = /^[ \t]*/.exec(ln)[0].replace(/\t/g, "  ").length;
+  const level = levels.get(lead) || 0;
+  const style = level ? ` style="padding-left:${(level * MEMO_INDENT_STEP + 1.15).toFixed(2)}em"` : "";
+  return `<div class="memo-line"${style}>${escapeHtml(ln.replace(/^[ \t]+/, ""))}</div>`;
+}
+
 // 筆記內文一行一個 block，而不是整塊 white-space: pre-wrap。
 //
 // 為什麼要拆：手機寬度下一條「去程 BR2198　TPE 09:40 → NRT 14:20」會折成兩三行，
 // 折下去的部分跟下一條靠在同一個左邊界，整篇就看不出哪裡是新的一條。拆成 block
 // 之後可以各自吃懸掛縮排（.memo-line），折行的部分往內縮，一眼分得出接續與換條。
-// 每行仍保留 pre-wrap，使用者自己打的縮排不會被吃掉。
 function memoLinesHtml(body) {
-  return String(body).split("\n").map((ln) =>
-    ln.trim() === ""
-      ? `<div class="memo-line memo-line--gap"></div>`
-      : `<div class="memo-line">${escapeHtml(ln)}</div>`
-  ).join("");
+  const lines = String(body).split("\n");
+  // 先切出表格段落，階層才不會被表格裡的對齊空白灌進去多算好幾階
+  const blocks = [];
+  for (let i = 0; i < lines.length; i++) {
+    let j = i;
+    while (j < lines.length && MEMO_ALIGNED_ROW.test(lines[j])) j++;
+    if (j - i >= 2) { blocks.push({ rows: lines.slice(i, j) }); i = j - 1; }
+    else blocks.push({ line: lines[i] });
+  }
+  const levels = memoIndentLevels(blocks.filter((b) => b.line !== undefined).map((b) => b.line));
+  return blocks.map((b) => b.rows ? memoTableHtml(b.rows) : memoLineHtml(b.line, levels)).join("");
 }
 
 function memoBodyHtml(m) {
