@@ -144,6 +144,13 @@ create table if not exists public.itinerary_items (
 -- 必須放在建表之後——放在前面的話，全新資料庫跑整份會在這行 relation does not exist 中斷。
 alter table public.itinerary_items add column if not exists weather_area text;
 
+-- 相容性調整：天氣自己的座標欄位。原本天氣直接寫 lat/lng，但那是跟地圖共用的欄位，
+-- 而天氣拿的是「行政區質心」不是景點座標 —— 結果整天路線的起點被帶到別的城市
+-- （真的發生過：AI 回「大阪市中央区」，Open-Meteo 給的是**東京都**中央区的座標）。
+-- 兩個用途各自一組欄位，lat/lng 從此只放這個 POI 真正的座標。
+alter table public.itinerary_items add column if not exists weather_lat numeric;
+alter table public.itinerary_items add column if not exists weather_lng numeric;
+
 -- 相容性調整：Naver 地圖用的韓文地名快取。Naver 搜「濟州國際機場」搜不到，
 -- 得用「제주국제공항」。由 AI 轉一次就存起來，同行夥伴也共用這份結果。
 -- 地點改掉時要一併清成 null，否則地圖會指著舊地點（見 js/app.js 的 clearNaverCache）。

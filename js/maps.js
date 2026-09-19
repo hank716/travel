@@ -128,8 +128,16 @@ export function searchUrl(provider, query) {
 }
 
 // 單一行程項目要跳去的網頁地圖網址。Naver 會自動吃到 queryOf 轉好的韓文名。
+//
+// Google 有座標就直接用座標：文字搜尋是「猜」，同名地點一多就猜錯（實測
+// 「屋島山上展望台」會開到愛知縣瀨戶市、「近鉄大阪難波駅」會開到生野區的信用金庫）。
+// 座標是逐筆確認過的，沒有猜的空間。沒座標才退回文字搜尋。
+// Naver 不走這條：它的網頁版吃 query 字串，座標要用 itemAppUrl 的 nmap:// 深連結。
 export function itemMapUrl(provider, item) {
   const p = providerOf({ map_provider: provider });
+  if (typeof item !== "string" && p === "google" && hasCoords(item)) {
+    return searchUrl(p, `${num(item.lat)},${num(item.lng)}`);
+  }
   const q = typeof item === "string" ? item : queryOf(item, p);
   return searchUrl(p, q);
 }
@@ -161,8 +169,14 @@ const MAX_STOPS = MAX_WAYPOINTS + 2;
 
 // 一站在網址裡長什麼樣。有座標就用座標：地名字串要 Google 自己 geocode，
 // 「道後溫泉」這種到處都有同名的猜錯一站整條路線就歪掉。
+//
+// 沒地點的項目不算一站。queryOf 會一路退到 title，而移動段的 title 是
+// 「德島道／高松道 → 高松」「出發往今治」這種句子 —— 拿去 geocode 會得到
+// 完全不相干的座標（實測分別落在島根縣與中國南寧），整條路線就被拉歪。
+// 所以路線只收「真的指得出地點」的項目：有座標，或有人填過地點/搜尋字。
 function stopOf(it) {
   if (hasCoords(it)) return `${num(it.lat)},${num(it.lng)}`;
+  if (!(it?.map_query || it?.location_name)) return "";
   return queryOf(it, "google");
 }
 
@@ -227,7 +241,12 @@ export async function previewMap(provider, item, { silent = false } = {}) {
   const frame = $("#mapFrame");
   if (!frame) return;
   frame.hidden = false;
-  frame.src = `https://www.google.com/maps?q=${encodeURIComponent(query)}&output=embed`;
+  // 跟 itemMapUrl 同一個道理：有座標就別讓 Google 再猜一次。
+  // 「緯度,經度(名稱)」這個寫法會把圖釘釘在座標上，同時保留看得懂的標籤。
+  const embedQ = (typeof item !== "string" && hasCoords(item))
+    ? `${num(item.lat)},${num(item.lng)}(${display})`
+    : query;
+  frame.src = `https://www.google.com/maps?q=${encodeURIComponent(embedQ)}&output=embed`;
   if (!silent) frame.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 

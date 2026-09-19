@@ -1126,6 +1126,10 @@ function updatePatch(o) {
         || o.fields.title || o.item.title;
     }
     patch.naver_query = null;   // 地點變了，舊的韓文快取要作廢重轉
+    // 座標也是上一個地點的。留著比沒有更糟：maps.js 有座標就不查地名了，
+    // 地圖會理直氣壯地指著舊地方。清掉就退回用新地名搜尋。
+    patch.lat = null;
+    patch.lng = null;
   }
   return patch;
 }
@@ -1918,6 +1922,9 @@ async function onItemSubmit(e) {
   // 地點換了，之前 AI 轉的韓文就是舊地點的，留著地圖會指錯地方
   if (payload.map_query !== (f.dataset.prevQuery || "")) {
     payload.naver_query = null;
+    // 同上：舊座標會蓋過新地名，地圖就指著舊地方不動了
+    payload.lat = null;
+    payload.lng = null;
     forgetNaverQueries();
   }
   try {

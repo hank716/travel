@@ -69,7 +69,7 @@ profiles          帳號檔（is_admin / username / display_name）— 跟著 au
 trips             行程主檔（code / title / 起訖日 / base_currency / map_provider）
 trip_currencies   這趟啟用哪些幣別（trip_id, code）
 members           這趟的成員（auth_uid / display_name / color / is_admin / can_edit）
-itinerary_items   行程項目（day_date / 時間 / 標題 / 分類 / 地點 / lat,lng / sort_order）
+itinerary_items   行程項目（day_date / 時間 / 標題 / 分類 / 地點 / lat,lng / weather_lat,weather_lng / sort_order）
 expenses          支出（原幣 amount + currency + rate_to_base 快照 / paid_by）
 expense_splits    分帳明細（expense_id, member_id, share_amount）
 packing_items     行李清單
@@ -165,20 +165,31 @@ Naver 的店家資料本來就登錄了**官方英文名**，而使用者手機�
 `js/weather.js`：行程項目的地點字串 → 用 AI 推斷行政區（`resolve_districts` mode）
 → 地理編碼 → Open-Meteo 逐日預報。
 
-解析出來的 `weather_area` / `lat` / `lng` **寫回 `itinerary_items` 快取**，
-不用每次重新問 AI。
+解析出來的 `weather_area` / `weather_lat` / `weather_lng` **寫回 `itinerary_items` 快取**，
+不用每次重新問 AI。沒有快取時會回退去讀地圖那份 `lat` / `lng`——那是人工確認過的
+POI 座標，拿來查天氣只會比行政區質心更準。
 
 超出 Open-Meteo 預報範圍（約 16 天）的日期，改抓**去年同期**的歷史資料當參考，
 畫面上會標明這是參考值不是預報。
 
-> **踩過的坑**：`lat` / `lng` 是跟 `maps.js` 共用的欄位（Naver 路線、`nmap://`
-> 深連結、內嵌地圖都讀它），而天氣這邊的地名是 AI 猜的羅馬拼音、又只取地理編碼
-> 第一名——猜錯的代價不是天氣不準，是整條路線被帶到別的國家
-> （真的發生過：AI 回 `"Jeju"`，寫進去的是衣索比亞的座標）。
+> **踩過的坑（踩了兩次）**：天氣原本直接寫 `lat` / `lng`，而那是跟 `maps.js`
+> 共用的欄位（整天路線、`nmap://` 深連結、內嵌地圖都讀它）。天氣這邊的地名是 AI 猜的、
+> 又只取地理編碼第一名——猜錯的代價不是天氣不準，是整條路線被帶到別的地方。
 >
-> 修法不是拆欄位，是**加驗證關卡**：只有在「AI 有給國碼」且「地理編碼結果的國家
-> 對得上」兩者都成立時才寫座標；對不上就只留行政區標籤，座標留空讓 `maps.js`
-> 自己用真正的地名去查。天氣本次仍照常顯示，代價只是下次重查一次。
+> 第一次修法是**加驗證關卡**：AI 有給國碼、且地理編碼結果的國家對得上，才寫座標。
+> 這擋住了跨國（AI 回 `"Jeju"`、第一名是衣索比亞的 Jeju），但**擋不住同國跨城**——
+> 後來大阪四國行程就中了：AI 回「大阪市中央区」，Open-Meteo 給的是**東京都**中央区的
+> `35.67004, 139.77544`，國碼同樣是 JP，驗證關卡放行，於是 9/23 與 9/24 的整天路線
+> 起點跑到東京。同一顆質心還被兩筆項目共用。
+>
+> 真正的修法就是**拆欄位**：天氣寫自己的 `weather_lat` / `weather_lng`，
+> `lat` / `lng` 從此只放逐筆確認過的 POI 座標（見 `tools/geocode-items.py`）。
+> 國碼檢查留著，但它現在只保護天氣自己，不再是地圖正確性的最後一道防線。
+>
+> 連帶要記得的兩件事：地點被改掉時 `lat` / `lng` 要跟 `naver_query` 一起清成 `null`
+> （不然地圖會理直氣壯指著舊地方），而**沒有地點的項目不能進整天路線**——
+> `queryOf` 會一路退到 `title`，移動段的「德島道／高松道 → 高松」拿去 geocode
+> 會落在島根縣。`stopOf` 現在要求「有座標，或有人填過地點／搜尋字」才算一站。
 
 ---
 

@@ -186,9 +186,13 @@ async function resolveEntries(days) {
       let geo = null;
       let area = null;
 
-      if (it.lat && it.lng) {
+      // 座標優先序：天氣自己的快取 → 地圖那份真正的 POI 座標。
+      // 後者是人工確認過的景點座標，拿來查天氣只會比行政區質心更準。
+      const cachedLat = it.weather_lat ?? it.lat;
+      const cachedLng = it.weather_lng ?? it.lng;
+      if (cachedLat && cachedLng) {
         // 已快取座標，直接用
-        geo = { lat: it.lat, lon: it.lng, name: it.weather_area || it.location_name || dd.query };
+        geo = { lat: cachedLat, lon: cachedLng, name: it.weather_area || it.location_name || dd.query };
       } else {
         const resolved = areaByDate[dd.date] || null;     // { area, geo, cc } 或 null
         area = resolved?.area || null;
@@ -200,18 +204,18 @@ async function resolveEntries(days) {
           || (it.map_query ? await geocode(it.map_query, opts) : null);
         // 寫回快取（座標 + 行政區標籤），下次與夥伴都免再呼叫 AI。
         //
-        // 但 lat/lng 是跟 maps.js 共用的欄位（Naver 路線網址、nmap:// 深連結、內嵌地圖都讀它），
-        // 而這裡的地名是 AI 猜的羅馬拼音、又只取地理編碼的第一名 —— 猜錯的代價不是天氣不準，
-        // 是整條路線被帶到別的國家（真的發生過：AI 回 "Jeju"，寫進去的是衣索比亞的座標）。
-        // 所以只有在確定國家對得上時才寫座標；對不上就只留行政區標籤，
-        // 座標留空讓 maps.js 自己用真正的地名去查，天氣本次仍照常顯示。
-        // 刻意要求「AI 給了國碼」且「地理編碼結果的國家對得上」兩者都成立才寫座標：
-        // 沒有國碼可比對時就是無從驗證，寧可不快取（下次重查一次而已），
-        // 也不要再往共用欄位塞一個沒人檢查過的座標。
+        // 座標一律寫 weather_lat/weather_lng，**絕對不要碰 lat/lng** —— 那是 maps.js 的欄位。
+        // 這裡查到的是行政區質心（Open-Meteo 是地名索引，不是 POI 解析器），
+        // 拿去當地圖站點會整條路線歪掉：曾經 AI 回「大阪市中央区」，
+        // 地理編碼給的是**東京都**中央区，整天路線的起點就跑到東京了。
+        //
+        // 國碼比對仍然保留：跨國猜錯（AI 回 "Jeju"、第一名是衣索比亞的 Jeju）連天氣都會錯，
+        // 寧可不快取下次重查，也不要存一個沒驗過的座標。但它只擋得住跨國，
+        // 擋不住同國跨城，所以地圖的正確性不能再靠這道檢查 —— 那已經由欄位分家解決。
         if (geo) {
           const trusted = !!cc && geo.countryCode === cc;
           const patch = { weather_area: area || geo.name };
-          if (trusted) { patch.lat = geo.lat; patch.lng = geo.lon; }
+          if (trusted) { patch.weather_lat = geo.lat; patch.weather_lng = geo.lon; }
           updateItem(it.id, patch).catch(() => {});
         }
       }
