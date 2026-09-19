@@ -106,8 +106,12 @@ function wrapRow(row, label, onDelete) {
       // 直向為主 → 讓瀏覽器捲動，這輪不再攔
       if (Math.abs(dy) > LOCK_PX && Math.abs(dy) > Math.abs(dx)) { active = false; return; }
       // 往右拖只有「收回已滑開的那列」這一種意義；列還沒滑開就往右拖，
-      // 那是在選字（或想捲動），放給瀏覽器處理
-      if (dx > 0 && !wrap.classList.contains("is-open")) { active = false; return; }
+      // 那是在選字（或想捲動），放給瀏覽器處理。
+      //
+      // 門檻要跟下面的橫向鎖定一致（LOCK_PX），不能寫成 dx > 0：手指按下去之後的
+      // 第一個 pointermove 很常是 +1~2px 的抖動，一碰到就把整輪手勢作廢
+      // （active 要到下次 pointerdown 才會復原），使用者往左滑到底也不會有反應。
+      if (dx > LOCK_PX && !wrap.classList.contains("is-open")) { active = false; return; }
       if (Math.abs(dx) < LOCK_PX) return;
       locked = true; swiped = true;
       wrap.classList.add("is-dragging");

@@ -86,21 +86,28 @@ serve(async (req) => {
       const color = body.color || "#5E7C58";
       if (!display_name || !username || !password) return json({ error: "缺少欄位（顯示名稱/帳號/密碼）" }, 400);
 
+      // 撞號一律擋下，不要「接管」既有帳號。
+      //
+      // 舊寫法在 createUser 失敗時會拿 username 去查 profiles，查到就直接沿用那個帳號：
+      // 接著 setDisplayName 會把那個人的 profiles.display_name 與他在**所有行程**的
+      // members.display_name 一起覆蓋掉，而密碼完全沒換 —— 管理員以為自己建了新帳號，
+      // 家人拿著剛輸入的密碼卻登不進去，另一個人還莫名其妙被改了名字。
+      // 而且 cerr 不一定是「email 已註冊」，密碼太短、限流也會走進那條路。
+      // 要把既有帳號加進某趟，請走「指派行程」（assign_trip），不是這裡。
+      const { data: taken } = await admin.from("profiles").select("id").eq("username", username).maybeSingle();
+      if (taken?.id) {
+        return json({ error: `帳號「${username}」已經存在。請換一個帳號；要把既有帳號加進行程，請用「指派行程」。` }, 400);
+      }
+
       const email = `${username}@${MEMBER_DOMAIN}`;
-      let userId: string | null = null;
       const { data: created, error: cerr } = await admin.auth.admin.createUser({
         email, password, email_confirm: true, user_metadata: { username, display_name },
       });
-      if (cerr) {
-        const { data: existing } = await admin.from("profiles").select("id").eq("username", username).maybeSingle();
-        if (existing?.id) userId = existing.id;
-        else return json({ error: "建立帳號失敗：" + cerr.message }, 400);
-      } else {
-        userId = created.user!.id;
-        await admin.from("profiles").update({ username }).eq("id", userId);
-      }
+      if (cerr) return json({ error: "建立帳號失敗：" + cerr.message }, 400);
+      const userId = created.user!.id;
+      await admin.from("profiles").update({ username }).eq("id", userId);
       // 顯示名稱存進帳號本身：之後指派到其他行程時才有得帶，不會退回 username
-      await setDisplayName(admin, userId!, display_name);
+      await setDisplayName(admin, userId, display_name);
       if (trip_id) {
         const { data: dup } = await admin.from("members").select("id").eq("trip_id", trip_id).eq("auth_uid", userId).maybeSingle();
         if (!dup) {
@@ -112,7 +119,7 @@ serve(async (req) => {
           if (merr) return json({ error: "加入行程失敗：" + merr.message }, 400);
         }
       }
-      return json({ ok: true, user_id: userId, reused: !!cerr });
+      return json({ ok: true, user_id: userId });
     }
 
     if (action === "set_display_name") {

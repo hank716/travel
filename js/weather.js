@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Hank Wang
 
 // 天氣：行程地點 →（AI 推斷行政區）→ Open-Meteo 即時預報（超過範圍改去年同期參考）。
-// 解析到的座標寫回 itinerary_items.lat/lng/weather_area 快取，避免重複呼叫 AI。
+// 解析到的座標寫回 itinerary_items.weather_lat/weather_lng/weather_area 快取，避免重複呼叫 AI。
 import { callAI } from "@/ai.js";
 import { ymd } from "@/constants.js";
 import { updateItem } from "@/itinerary.js";
@@ -32,6 +32,18 @@ function esc(s) {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 function r0(v, f = "—") { return v == null ? f : Math.round(v); }
+
+// 座標優先序：天氣自己的快取（行政區質心）→ 地圖那份真正的 POI 座標。
+// 後者是人工確認過的景點座標，拿來查天氣只會比行政區質心更準。
+//
+// 不用真值判斷：座標沒填時 DB 回 null，但經度剛好是 0（本初子午線）也是假值，
+// 直接 `lat && lng` 會把它當成「沒座標」。同 js/maps.js 的 num()。
+const num = (v) => (v === null || v === undefined || v === "" ? NaN : Number(v));
+function cachedCoords(it) {
+  const lat = num(it?.weather_lat ?? it?.lat);
+  const lng = num(it?.weather_lng ?? it?.lng);
+  return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
+}
 
 const FORECAST_DAILY = [
   "temperature_2m_max", "temperature_2m_min", "apparent_temperature_max",
@@ -123,7 +135,7 @@ function cardHtml(e) {
   if (e.error || !e.res) {
     return `<div class="forecast-card">${head}<p class="fc-cond">${esc(e.error || "查無天氣")}</p></div>`;
   }
-  const d = e.res.daily, i = 0;
+  const d = e.res.daily || {}, i = 0;
   const meta = ICONS[d.weathercode?.[i]] || { icon: "🌤️", label: "—" };
   const climate = e.res.source === "climate";
   const pop = d.precipitation_probability_max?.[i];
@@ -146,7 +158,7 @@ function cardHtml(e) {
 }
 
 function toSummary(e) {
-  const d = e.res.daily, i = 0;
+  const d = e.res.daily || {}, i = 0;
   return {
     date: e.date, city: e.geo?.name || e.query,
     tmax: d.temperature_2m_max?.[i], tmin: d.temperature_2m_min?.[i],
@@ -158,7 +170,7 @@ function toSummary(e) {
 
 // 對沒有座標的日子，一次呼叫 AI 取得各日行政區
 async function resolveAreas(days) {
-  const need = days.filter((d) => !(d.item.lat && d.item.lng));
+  const need = days.filter((d) => !cachedCoords(d.item));
   if (!need.length) return {};
   try {
     const { areas } = await callAI("resolve_districts", {
@@ -186,13 +198,10 @@ async function resolveEntries(days) {
       let geo = null;
       let area = null;
 
-      // 座標優先序：天氣自己的快取 → 地圖那份真正的 POI 座標。
-      // 後者是人工確認過的景點座標，拿來查天氣只會比行政區質心更準。
-      const cachedLat = it.weather_lat ?? it.lat;
-      const cachedLng = it.weather_lng ?? it.lng;
-      if (cachedLat && cachedLng) {
-        // 已快取座標，直接用
-        geo = { lat: cachedLat, lon: cachedLng, name: it.weather_area || it.location_name || dd.query };
+      // 已快取座標（見 cachedCoords 的優先序）就直接用，不必再問 AI 也不必地理編碼
+      const cached = cachedCoords(it);
+      if (cached) {
+        geo = { lat: cached.lat, lon: cached.lng, name: it.weather_area || it.location_name || dd.query };
       } else {
         const resolved = areaByDate[dd.date] || null;     // { area, geo, cc } 或 null
         area = resolved?.area || null;

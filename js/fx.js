@@ -4,17 +4,16 @@
 // 即時匯率：open.er-api.com（免金鑰，含全球主要貨幣）。
 // 三層快取：記憶體 → Supabase fx_cache（每日一筆，跨裝置共用）→ 外部 API。
 import { supabase } from "@/supabase.js";
+// 日期一律用本地時區：toISOString() 是 UTC，台北時間早上 8 點前會算成前一天，
+// 整個快取（記憶體 + fx_cache 那一列）就會跟畫面其他地方差一天。
+import { todayStr } from "@/constants.js";
 
 const mem = new Map(); // base -> { rates, date }
-
-function today() {
-  return new Date().toISOString().slice(0, 10);
-}
 
 // 取得以 base 為基準的匯率表 { USD: 1, JPY: 156.2, ... }
 export async function getRates(base) {
   base = (base || "USD").toUpperCase();
-  const d = today();
+  const d = todayStr();
 
   const cached = mem.get(base);
   if (cached && cached.date === d) return cached.rates;

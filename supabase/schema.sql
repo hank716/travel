@@ -633,7 +633,7 @@ create policy memo_comments_delete on public.memo_comments for delete
          or exists (select 1 from public.members m
                     where m.id = member_id and m.auth_uid = auth.uid()));
 
--- fx_cache：所有登入者可讀寫（純快取，非機密）。
+-- fx_cache：所有登入者可讀寫（純快取，非機密）。寫入要 insert + update 兩條，upsert 才走得通。
 -- `to authenticated` 已經表達了原本 auth.role() = 'authenticated' 的意思，不必重複判斷。
 drop policy if exists fx_select on public.fx_cache;
 create policy fx_select on public.fx_cache for select
@@ -646,7 +646,21 @@ drop policy if exists fx_insert on public.fx_cache;
 create policy fx_insert on public.fx_cache for insert
   to authenticated
   with check (
-    date between current_date - 1 and current_date + 1   -- js/fx.js 用 UTC 日期，容錯 ±1 天
+    date between current_date - 1 and current_date + 1   -- 前端是使用者本地日期，跨時區容錯 ±1 天
+    and base ~ '^[A-Z]{3}$'
+    and jsonb_typeof(rates) = 'object'
+  );
+
+-- UPDATE 也要有政策：js/fx.js 寫的是 upsert(onConflict: "date,base")，撞到既有列時
+-- Postgres 走的是 ON CONFLICT DO UPDATE，只有 INSERT 政策會被 RLS 擋掉。
+-- 而且 fx.js 把錯誤吃掉了（.then(()=>{}, ()=>{})），少這條會是無聲失敗：
+-- 兩台裝置同時開同一趟就會踩到，當天那列也再也刷新不了。條件與 INSERT 對稱。
+drop policy if exists fx_update on public.fx_cache;
+create policy fx_update on public.fx_cache for update
+  to authenticated
+  using (date between current_date - 1 and current_date + 1)
+  with check (
+    date between current_date - 1 and current_date + 1
     and base ~ '^[A-Z]{3}$'
     and jsonb_typeof(rates) = 'object'
   );

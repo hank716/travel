@@ -71,6 +71,10 @@ export async function clearExpenses(tripId) {
   if (error) throw error;
 }
 
+// expense_splits 沒有 trip_id，下不了跟其他表一樣的 filter，所以會收到「所有看得到的」
+// 分帳變動（RLS 之內，含別趟）而多重畫幾次。仍然要訂閱：updateExpense 是先寫 expenses
+// 再 replaceSplits，只聽母表的話，對方收到 UPDATE 事件時分帳還沒換完，撈回來的是舊的
+// 分攤名單，而且不會再有第二個事件來修正。多重畫幾次換不會顯示錯的分帳，划算。
 export function subscribeExpenses(tripId, onChange) {
   return subscribeChannel("exp-" + tripId, [
     { event: "*", schema: "public", table: "expenses", filter: `trip_id=eq.${tripId}` },

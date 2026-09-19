@@ -152,7 +152,13 @@ tools/make-icons.py         產生各尺寸 favicon
 ### 示範行程（一鍵灌滿假資料）
 
 SQL Editor 再跑一次 [`supabase/seed-demo.sql`](./supabase/seed-demo.sql)（只需一次），
-之後網站上按「🎌 示範行程」即可。入口三個：**⚙️ 管理 → 行程管理**、**❓ 說明**頁底部、
+之後網站上按「🎌 示範行程」即可。
+
+> ⚠️ `schema.sql` 標榜「可重複執行」，但它尾端的
+> `revoke execute on all functions in schema public` 會把 `seed-demo.sql` 給
+> `seed_demo_trip` 的 grant 一起收掉。**每次重跑 `schema.sql` 之後，都要再跑一次
+> `seed-demo.sql`**，否則「示範行程」按鈕會變成 permission denied。
+入口三個：**⚙️ 管理 → 行程管理**、**❓ 說明**頁底部、
 還沒有行程時**總覽**上的提示。
 
 內容：5 天 24 個行程項目、14 筆三幣別支出（結算有得算）、17 件行李、4 則備忘與留言、

@@ -724,7 +724,9 @@ async function renderAdmin() {
     const t = trips.find((x) => x.id === b.dataset.enterTrip); saveTrip(t); enterTrip(t.id).catch((e) => toast(humanError(e), false));
   }));
   tBox.querySelectorAll("[data-edit-trip]").forEach((b) => (b.onclick = () => openTripEdit(trips.find((x) => x.id === b.dataset.editTrip))));
-  tBox.querySelectorAll("[data-del-trip]").forEach((b) => (b.onclick = () => onDeleteTrip(b.dataset.delTrip, b.dataset.title).then(() => renderAdmin())));
+  // onDeleteTrip 自己會處理取消（回 false），只有真的刪掉才重畫整頁
+  tBox.querySelectorAll("[data-del-trip]").forEach((b) => (b.onclick = () =>
+    onDeleteTrip(b.dataset.delTrip, b.dataset.title).then((done) => { if (done) renderAdmin(); })));
 
   // 帳號管理
   try {
@@ -1258,12 +1260,6 @@ function expenseGreeting() {
        匯率與每人分多少由系統換算，你只要講「誰付的、多少錢、誰分」。
        <div class="ai-msg-eg"><b>例如：</b>${AI_EXAMPLES_EXPENSE.map((e) => `「${escapeHtml(e)}」`).join("<br>")}</div>
      </div>`;
-}
-
-// 名字陣列 → 成員 id 陣列；空的（或全對不到）代表全員均分
-function splitIdsFrom(names) {
-  const ids = (Array.isArray(names) ? names : []).map(memberByName).filter(Boolean).map((m) => m.id);
-  return ids.length ? [...new Set(ids)] : state.members.map((m) => m.id);
 }
 
 function validateExpenseOps(raw, refMap) {
@@ -1897,6 +1893,8 @@ function openItemModal(item) {
       : (state.trip?.start_date || "");
     setTimeValue(f.start_h, f.start_m, "");
     setTimeValue(f.end_h, f.end_m, "");
+    // dataset 掛在表單上，不重設會留著上一次編輯的那一筆的值
+    f.dataset.prevQuery = "";
   }
   $("#itemModal").hidden = false;
   syncDateFaces($("#itemModal"));
@@ -2094,7 +2092,13 @@ function openExpenseModal(exp) {
 
   $("#expensePayer").innerHTML = state.members
     .map((m) => `<option value="${m.id}">${escapeHtml(m.display_name)}</option>`).join("");
-  const curs = state.currencies.length ? state.currencies : [state.trip.base_currency];
+  // 這筆本來記的幣別一定要在選項裡，即使它後來被移出這趟。
+  // 少了這一段，select.value = exp.currency 會對不到 option → value 變成空字串，
+  // 存檔時就把 currency 寫成 ""（DB 只有 not null，空字串照收），匯率也一併退回 1。
+  const curs = [...new Set([
+    ...(state.currencies.length ? state.currencies : [state.trip.base_currency]),
+    exp?.currency,
+  ].filter(Boolean))];
   $("#expenseCurrency").innerHTML = curs
     .map((c) => `<option value="${c}">${currencyLabel(c)}</option>`).join("");
 
@@ -2944,8 +2948,10 @@ function renderMyTrips(trips) {
     }));
 }
 
+// 回傳「這趟真的被刪掉了嗎」：呼叫端（管理頁）據此決定要不要重畫整頁，
+// 使用者按取消時就不必白重刷一次。
 async function onDeleteTrip(id, title) {
-  if (!await confirmDialog({ title: "刪除行程", body: `確定刪除「${title}」？\n此行程的所有項目與記帳都會一起刪除，無法復原。`, danger: true, okText: "刪除" })) return;
+  if (!await confirmDialog({ title: "刪除行程", body: `確定刪除「${title}」？\n此行程的所有項目與記帳都會一起刪除，無法復原。`, danger: true, okText: "刪除" })) return false;
   try {
     await deleteTrip(id);
     const wasCurrent = state.trip?.id === id;
@@ -2959,7 +2965,8 @@ async function onDeleteTrip(id, title) {
     const trips = await listMyTrips();
     renderMyTrips(trips);
     renderDrawerTrips(trips);
-  } catch (e) { toast(humanError(e), false); }
+    return true;
+  } catch (e) { toast(humanError(e), false); return false; }
 }
 
 // ---------- 啟動 ----------
